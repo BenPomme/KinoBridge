@@ -1,5 +1,7 @@
 # KinoBridge Chrome extension
 
+For end-user installation and operation, follow the repository's [complete installation and user guide](../docs/installation.md).
+
 Build with `pnpm --filter @kinobridge/extension build`, then load `extension/dist` from `chrome://extensions` in Developer mode.
 
 Clicking the toolbar action opens one persistent KinoBridge companion window. It stays open when focus moves back to Chrome, VLC, or mpv; use the window's yellow macOS control or the in-app **Minimize** button to reduce it. Clicking the toolbar action again restores and focuses the same window instead of creating a duplicate. Closing the window is respected until the user explicitly opens KinoBridge again.

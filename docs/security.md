@@ -2,7 +2,7 @@
 
 - The helper accepts only HTTPS origins derived from a selected Kino candidate or its parsed playlists.
 - The loopback broker binds to `127.0.0.1`, uses random session routes, and never becomes a general-purpose proxy.
-- Native messages, popup text, paths, dimensions, headers, and filenames are runtime validated.
+- Native messages, companion-window text, paths, dimensions, headers, and filenames are runtime validated.
 - Processes are spawned without a shell. Signed URLs and cookies are omitted from logs and process arguments.
 - Partial downloads are isolated, cancelled cleanly, validated with ffprobe, and atomically renamed.
 - The persistent offline state never contains HLS URLs, cookies, authorization headers, or bearer tokens. Running/queued jobs become interrupted after restart and require a fresh authorized capture.
