@@ -177,8 +177,12 @@ async function handleNativeMessage(message: unknown): Promise<void> {
       break;
     }
     case "progress": {
-      const payload = envelope.payload as { percent?: unknown; job?: { progress?: { percent?: unknown } }; offline?: unknown };
+      const payload = envelope.payload as { phase?: unknown; percent?: unknown; job?: { progress?: { percent?: unknown } }; offline?: unknown };
       if (payload.offline) await setOfflineState(payload.offline);
+      if (payload.phase === "analyzing-3d") {
+        await setStatus("Analyzing this movie's 3D geometry automatically…");
+        break;
+      }
       const rawPercent = typeof payload?.percent === "number" ? payload.percent : payload?.job?.progress?.percent;
       const percent = typeof rawPercent === "number" ? Math.max(0, Math.min(100, rawPercent)) : undefined;
       await setStatus(percent === undefined ? "Media job in progress" : `Media job ${Math.round(percent)}%`);

@@ -8,11 +8,12 @@ import { sanitizeFilename } from "@kinobridge/shared";
 import { requireDependency } from "./diagnostics.js";
 import { KinoBridgeError } from "./errors.js";
 import { spawnSafe } from "./process.js";
+import { analyzeTopBottomGeometry, type StereoAnalysis } from "./stereo-analysis.js";
 import { buildTopBottomToSbsFilter } from "./stereo.js";
 import { buildStereoAss } from "./stereo-subtitles.js";
 
 export interface DownloadProgress {
-  phase: "downloading" | "validating";
+  phase: "analyzing-3d" | "downloading" | "validating";
   seconds?: number;
   percent?: number;
 }
@@ -114,12 +115,13 @@ export function buildFfmpegArguments(
   descriptor: StreamDescriptor,
   options: DownloadOptions,
   temporary: string,
-  preparedStereoSubtitle?: string
+  preparedStereoSubtitle?: string,
+  stereoAnalysis?: StereoAnalysis
 ): string[] {
   assertLocalBrokerUrl(resources.videoUrl);
   if (resources.audio) assertLocalBrokerUrl(resources.audio.url);
   if (resources.subtitle && !preparedStereoSubtitle) assertLocalBrokerUrl(resources.subtitle.url);
-  const filter = buildTopBottomToSbsFilter(options);
+  const filter = buildTopBottomToSbsFilter(options, stereoAnalysis);
   if (filter && options.codec === "copy") throw new KinoBridgeError("CODEC_REQUIRED", "SBS conversion requires H.264 or HEVC transcoding");
   if (preparedStereoSubtitle && preparedStereoSubtitle !== `${temporary}.stereo.ass`) {
     throw new KinoBridgeError("UNSAFE_MEDIA_INPUT", "Prepared subtitle path is outside this download job");
@@ -402,15 +404,28 @@ export async function startDownload(
   resources: DownloadResources,
   descriptor: StreamDescriptor,
   options: DownloadOptions,
-  onProgress: (progress: DownloadProgress) => void
+  onProgress: (progress: DownloadProgress) => void,
+  signal?: AbortSignal
 ): Promise<DownloadHandle> {
   const ffmpeg = await requireDependency("ffmpeg");
   const paths = await resolveOutputPaths(options);
   await assertDestinationAvailable(paths.final);
+  const requiresStereoAnalysis = Boolean(buildTopBottomToSbsFilter(options));
+  const stereoAnalysis = requiresStereoAnalysis
+    ? await (async () => {
+        onProgress({ phase: "analyzing-3d" });
+        return analyzeTopBottomGeometry(ffmpeg, resources.videoUrl, descriptor.durationSeconds, options.outputHeight, signal);
+      })()
+    : undefined;
+  if (signal?.aborted) throw new KinoBridgeError("CANCELED", "Download was canceled");
   const preparedSubtitle = await prepareStereoSubtitle(ffmpeg, resources, options, paths.temporary);
+  if (signal?.aborted) {
+    await Promise.all(preparedSubtitle.cleanup.map((path) => rm(path, { force: true })));
+    throw new KinoBridgeError("CANCELED", "Download was canceled");
+  }
   let child: ChildProcessWithoutNullStreams;
   try {
-    child = spawnSafe(ffmpeg, buildFfmpegArguments(resources, descriptor, options, paths.temporary, preparedSubtitle.path));
+    child = spawnSafe(ffmpeg, buildFfmpegArguments(resources, descriptor, options, paths.temporary, preparedSubtitle.path, stereoAnalysis));
   } catch (error) {
     await Promise.all(preparedSubtitle.cleanup.map((path) => rm(path, { force: true })));
     throw error;

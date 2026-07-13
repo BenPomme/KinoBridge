@@ -52,7 +52,8 @@ export class JobManager {
     try {
       const player = await launchPlayer(localUrl, options, {
         ...(selected.audioTrack?.uri ? { audioUrl: broker.expose(selected.audioTrack.uri) } : {}),
-        ...(selected.subtitleTrack?.uri ? { subtitleUrl: broker.expose(selected.subtitleTrack.uri) } : {})
+        ...(selected.subtitleTrack?.uri ? { subtitleUrl: broker.expose(selected.subtitleTrack.uri) } : {}),
+        ...(descriptor.durationSeconds === undefined ? {} : { durationSeconds: descriptor.durationSeconds })
       });
       const snapshot: JobSnapshot = { id, kind: "playback", state: "running", startedAt: Date.now(), updatedAt: Date.now() };
       this.jobs.set(id, { snapshot, broker, cancel: () => { player.stop(); void player.cleanup(); } });

@@ -37,4 +37,4 @@ pnpm --filter @kinobridge/native-helper build
 pnpm --filter @kinobridge/native-helper diagnose
 ```
 
-FFmpeg/ffprobe/mpv are detected in standard Homebrew locations. VLC and IINA are detected in `/Applications`. The current SBS filter converts Top/Bottom video to Full-SBS with independent eye alignment. Offline remuxing resolves the preferred audio/subtitle tracks explicitly and embeds the selected subtitle when requested.
+FFmpeg/ffprobe/mpv are detected in standard Homebrew locations. VLC and IINA are detected in `/Applications`. Top/Bottom playback and downloads sample the selected broker stream, conservatively detect stable per-eye packing borders, restore the selected Half/Full-TB aspect, and convert to Full-SBS. Manual alignment is applied only after automatic geometry normalization. Offline remuxing resolves the preferred audio/subtitle tracks explicitly and embeds the selected subtitle when requested.

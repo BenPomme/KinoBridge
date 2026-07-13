@@ -7,6 +7,7 @@ import type { PlaybackOptions } from "@kinobridge/shared";
 import { requireDependency } from "./diagnostics.js";
 import { KinoBridgeError } from "./errors.js";
 import { spawnSafe } from "./process.js";
+import { analyzeTopBottomGeometry } from "./stereo-analysis.js";
 import { buildTopBottomToSbsFilter } from "./stereo.js";
 
 export interface PlayerHandle {
@@ -18,6 +19,7 @@ export interface PlayerHandle {
 export interface ExternalPlaybackResources {
   audioUrl?: string;
   subtitleUrl?: string;
+  durationSeconds?: number;
 }
 
 function languageList(languages: string[]): string {
@@ -46,7 +48,16 @@ async function launchMpv(localUrl: string, options: PlaybackOptions, resources: 
   const executable = await requireDependency("mpv");
   const runtimeDirectory = await mkdtemp(join(tmpdir(), "kinobridge-mpv-"));
   const socketPath = join(runtimeDirectory, "control.sock");
-  const filter = buildTopBottomToSbsFilter(options);
+  const requiresStereoAnalysis = Boolean(buildTopBottomToSbsFilter(options));
+  const geometry = requiresStereoAnalysis
+    ? await analyzeTopBottomGeometry(
+        await requireDependency("ffmpeg"),
+        localUrl,
+        resources.durationSeconds,
+        options.outputHeight
+      )
+    : undefined;
+  const filter = buildTopBottomToSbsFilter(options, geometry);
   const args = [
     "--idle=yes",
     "--force-window=yes",

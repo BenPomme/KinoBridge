@@ -30,7 +30,7 @@ interface OfflineDependencies {
   createBroker(candidate: StreamCandidate, onAuthExpired: () => void, playlistUrls: readonly string[]): BrokerLike;
   probe(candidate: StreamCandidate): Promise<StreamDescriptor>;
   inspectBroker(localUrl: string, kind: "video" | "audio" | "subtitle", signal: AbortSignal): Promise<{ encrypted: boolean; durationSeconds?: number }>;
-  download(resources: DownloadResources, descriptor: StreamDescriptor, options: DownloadOptions, onProgress: (progress: DownloadProgress) => void): Promise<DownloadHandle>;
+  download(resources: DownloadResources, descriptor: StreamDescriptor, options: DownloadOptions, onProgress: (progress: DownloadProgress) => void, signal?: AbortSignal): Promise<DownloadHandle>;
 }
 
 interface ActiveDownload {
@@ -275,7 +275,7 @@ export class OfflineManager {
         ...(selected.audioTrack ? { audioTrack: selected.audioTrack } : {}),
         ...(audioUrl && selected.audioTrack ? { audio: { url: audioUrl, track: selected.audioTrack } } : {}),
         ...(subtitleUrl && selected.subtitleTrack ? { subtitle: { url: subtitleUrl, track: selected.subtitleTrack } } : {})
-      }, descriptor, job.options, (progress) => this.onProgress(job.id, progress));
+      }, descriptor, job.options, (progress) => this.onProgress(job.id, progress), operation.setupController.signal);
       operation.handle = handle;
       if (operation.aborted) {
         // Observe the completion rejection before canceling. Otherwise a

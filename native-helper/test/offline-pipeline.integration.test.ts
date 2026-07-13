@@ -127,7 +127,7 @@ describe.skipIf(!ffmpeg)("offline media pipeline integration", () => {
       }, descriptor, DownloadOptionsSchema.parse({
         outputDirectory: root, filename: "Stereo Integration", container: "mkv", codec: "h264-videotoolbox",
         inputStereo: "half-tb", outputProfile: "xreal-sbs", outputWidth: 640, outputHeight: 360,
-        verticalAlignment: -36, subtitleLanguages: ["en"], embedSubtitles: true
+        verticalAlignment: 0, subtitleLanguages: ["en"], embedSubtitles: true
       }), () => undefined)).completed;
       expect(result.tracks).toEqual(expect.arrayContaining([
         expect.objectContaining({ type: "video", codec: "h264", width: 640, height: 360 }),

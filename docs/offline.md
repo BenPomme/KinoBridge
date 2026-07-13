@@ -7,11 +7,12 @@ KinoBridge downloads an authorized, non-encrypted Kino HLS title into a normal l
 1. Open the movie's Kino page while authenticated and open KinoBridge. If no inspected video playlist exists, KinoBridge briefly starts muted playback, restores the player state, and performs one cache-bypassing page reload only when necessary.
 2. Choose the exact Kino soundtrack and subtitle renditions. KinoBridge defaults to a rendition explicitly named **Original** and regular English subtitles; `en` also matches HLS `eng`. If the requested rendition is unavailable, the job fails instead of silently substituting another language.
 3. Select the quality. The output folder defaults to `~/Downloads` and the filename defaults to the Kino movie title.
-4. Normal movies default to original remux. A title labelled 3D receives the tested Kino/XREAL preset automatically: Half Top/Bottom input, Full-SBS output, 3840×1080 geometry, a calibrated -78 vertical eye alignment, neutral aspect/zoom, and H.264 VideoToolbox.
+4. Normal movies default to original remux. A title labelled 3D receives the Kino/XREAL preset automatically: Half Top/Bottom input, Full-SBS output, 3840×1080 geometry, neutral manual alignment/aspect/zoom, and H.264 VideoToolbox.
 5. Click **Download MKV** and keep Chrome open while the job is active. Multiple movies form a FIFO queue and one download runs at a time.
-6. KinoBridge downloads explicit video, exact audio, and exact subtitle inputs through localhost-only capability URLs. For SBS MKV output, it converts the selected subtitle to a temporary ASS track with one centered, clipped copy in each eye. Selected child playlists are inspected through the broker rather than fetched directly.
-7. Before completion, KinoBridge verifies the requested container, video codec and geometry, expected video/audio/subtitle streams and languages, checks duration tolerance, and decodes samples near the beginning and end. SBS transcodes additionally verify their encoder profile and exact output dimensions.
-8. The validated temporary file is installed atomically and appears in **Offline library**.
+6. Before an SBS conversion, KinoBridge samples several interior scenes through the localhost broker. It measures persistent black packing borders independently in both eyes, removes only stable borders, restores Half- or Full-Top/Bottom display aspect, and centers both eyes without a title-specific offset. The vertical alignment field remains an additive manual override and normally stays at `0`.
+7. KinoBridge downloads explicit video, exact audio, and exact subtitle inputs through localhost-only capability URLs. For SBS MKV output, it converts the selected subtitle to a temporary ASS track with one centered, clipped copy in each eye. Selected child playlists are inspected through the broker rather than fetched directly.
+8. Before completion, KinoBridge verifies the requested container, video codec and geometry, expected video/audio/subtitle streams and languages, checks duration tolerance, and decodes samples near the beginning and end. SBS transcodes additionally verify their encoder profile and exact output dimensions.
+9. The validated temporary file is installed atomically and appears in **Offline library**.
 
 ## Expired stream access
 
@@ -33,6 +34,7 @@ If Chrome or the helper stops during a download, unfinished jobs become **interr
 ## Boundaries
 
 - Encrypted or DRM-protected HLS is rejected. KinoBridge does not extract keys or licenses.
+- If several samples cannot establish safe, consistent Top/Bottom geometry, conversion stops with an explicit analysis error instead of applying a guessed crop or the calibration from another movie.
 - The selected video playlist and every selected external audio/subtitle playlist are checked for encryption before FFmpeg starts.
 - Original remux preserves the source encoding profile. Because an HLS master does not reliably advertise that profile, remux validation checks the advertised source codec and geometry but does not require a named source profile. VideoToolbox SBS output is pinned and validated as H.264 High or HEVC Main.
 - Chrome must remain open for an active download to receive refreshed authorization.

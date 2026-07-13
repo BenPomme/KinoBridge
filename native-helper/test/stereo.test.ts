@@ -16,12 +16,12 @@ describe("Top/Bottom to SBS filter", () => {
     const options = PlaybackOptionsSchema.parse({
       inputStereo: "half-tb",
       outputProfile: "xreal-sbs",
-      verticalAlignment: -78
+      verticalAlignment: 18
     });
     const filter = buildTopBottomToSbsFilter(options)!;
-    expect(filter).toContain("max(ih\\,1080)+156");
-    expect(filter).toContain("(ih-oh)/2+-78");
-    expect(filter).toContain("(ih-oh)/2+78");
+    expect(filter).toContain("max(ih\\,1080)+36");
+    expect(filter).toContain("(ih-oh)/2+18");
+    expect(filter).toContain("(ih-oh)/2+-18");
   });
 
   it("swaps eye labels for right-first input", () => {
