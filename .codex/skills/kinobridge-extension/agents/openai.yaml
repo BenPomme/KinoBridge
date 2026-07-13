@@ -1,0 +1,4 @@
+interface:
+  display_name: "KinoBridge Extension"
+  short_description: "Build and validate the KinoBridge MV3 bridge"
+  default_prompt: "Use $kinobridge-extension to implement or test KinoBridge Chrome extension behavior."

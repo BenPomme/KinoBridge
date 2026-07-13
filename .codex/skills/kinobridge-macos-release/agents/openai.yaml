@@ -1,0 +1,4 @@
+interface:
+  display_name: "KinoBridge macOS Release"
+  short_description: "Sign, notarize, and validate KinoBridge releases"
+  default_prompt: "Use $kinobridge-macos-release to package and validate a KinoBridge macOS release without exposing signing credentials."

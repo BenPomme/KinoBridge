@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "KinoBridge",
+  "description": "Open authorized Kino.pub HLS streams in a local media player.",
+  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1SDdiMOeHGGbV8DCHhn1PtNJWYA8UTTVs78zHSb3tCprmYXSGxCzyHWZ2TxP0FClTWl/l9KYyzwJdeGsqdmx29dLK09VhrTj55OwNSdhvxVejgtAg0zY9gbzggmcZKb6MjVAz3qTb4YSy+jrZTv1PCqXfELDiz/KJCq7Qnhx10u6rqOfIuELEcgIUJczZ3b2FywT1XMyDbuuIJB/fB+Rg83RwFzjRdSoXHXkmrkNbcuLhl5ShD5x/G/KoLLU4jUPsfetoXeYijPBP4JYyIPIM0mNc6B4I6mPZxQtBE2afGZMnudeMdwkPUe3pz6U8/D8k5oG/J85evcjQgILQTuc+QIDAQAB",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "tabs", "webRequest", "nativeMessaging"],
+  "host_permissions": [
+    "https://kino.pub/*",
+    "https://*.kino.pub/*",
+    "https://zerkalo.xyz/*",
+    "https://*.zerkalo.xyz/*"
+  ],
+  "optional_host_permissions": ["https://*/*"],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "KinoBridge",
+    "default_popup": "popup.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  }
+}

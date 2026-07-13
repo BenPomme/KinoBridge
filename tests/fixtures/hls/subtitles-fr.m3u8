@@ -1,0 +1,5 @@
+#EXTM3U
+#EXT-X-TARGETDURATION:6
+#EXTINF:6.0,
+subtitles/fr-000.vtt
+#EXT-X-ENDLIST

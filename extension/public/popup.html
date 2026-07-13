@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>KinoBridge</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">KinoBridge</p>
+        <h1 id="title">Loading…</h1>
+        <p id="status" class="status" role="status" aria-live="polite">Connecting…</p>
+        <button id="enable-cdn" type="button" class="permission">Enable Kino CDN detection</button>
+        <p id="cdn-note" class="permission-note">Required once so KinoBridge can observe playlists hosted by Kino's changing CDN domains.</p>
+      </header>
+
+      <form id="controls">
+        <fieldset id="stream-fields">
+          <legend>Detected stream</legend>
+          <label for="candidate">Playlist</label>
+          <select id="candidate" required></select>
+          <label for="manual-url">Manual HTTPS playlist URL</label>
+          <div class="inline">
+            <input id="manual-url" type="url" inputmode="url" placeholder="https://…/master.m3u8" autocomplete="off">
+            <button id="add-override" type="button" class="secondary">Add</button>
+          </div>
+        </fieldset>
+
+        <div class="grid">
+          <label for="quality">Quality</label>
+          <select id="quality"><option value="auto">Auto</option><option value="2160p">4K</option><option value="1080p">1080p</option><option value="720p">720p</option></select>
+          <label for="player">Player</label>
+          <select id="player"><option value="mpv">mpv</option><option value="iina">IINA</option><option value="vlc">VLC</option></select>
+          <label for="audio">Audio order</label>
+          <input id="audio" value="fr,en" autocomplete="off">
+          <label for="subtitles">Subtitle order</label>
+          <input id="subtitles" value="fr,en" autocomplete="off">
+          <label for="input-stereo">Input 3D</label>
+          <select id="input-stereo"><option value="auto">Auto</option><option value="2d">2D</option><option value="half-tb">Half Top/Bottom</option><option value="full-tb">Full Top/Bottom</option><option value="half-sbs">Half SBS</option><option value="full-sbs">Full SBS</option></select>
+          <label for="output-profile">Output</label>
+          <select id="output-profile"><option value="normal">Normal</option><option value="xreal-sbs">XREAL Full-SBS</option></select>
+          <label for="eye-order">Eye order</label>
+          <select id="eye-order"><option value="left-first">Left first</option><option value="right-first">Right first</option></select>
+        </div>
+
+        <details>
+          <summary>Advanced settings</summary>
+          <div class="grid advanced">
+            <label for="output-width">Output width</label><input id="output-width" type="number" min="640" max="7680" value="3840">
+            <label for="output-height">Output height</label><input id="output-height" type="number" min="360" max="4320" value="1080">
+            <label for="refresh-rate">Refresh rate</label><input id="refresh-rate" type="number" min="24" max="120" value="60">
+            <label for="aspect">Aspect correction</label><input id="aspect" type="number" min="0.25" max="4" step="0.01" value="1">
+            <label for="h-align">Horizontal align</label><input id="h-align" type="number" min="-500" max="500" value="0">
+            <label for="v-align">Vertical align</label><input id="v-align" type="number" min="-500" max="500" value="0">
+            <label for="zoom">Zoom</label><input id="zoom" type="number" min="0.25" max="4" step="0.01" value="1">
+            <label for="download-dir">Output folder</label><input id="download-dir" value="~/Downloads">
+            <label for="filename">Filename</label><input id="filename" value="KinoBridge-download">
+            <label for="codec">Download codec</label><select id="codec"><option value="copy">Original (remux)</option><option value="h264-videotoolbox">H.264 VideoToolbox</option><option value="hevc-videotoolbox">HEVC VideoToolbox</option></select>
+          </div>
+          <label class="check"><input id="subtitles-enabled" type="checkbox" checked> Enable subtitles</label>
+          <label class="check"><input id="forced-only" type="checkbox"> Forced subtitles only</label>
+          <label class="check"><input id="embed-subtitles" type="checkbox" checked> Embed subtitles in download</label>
+        </details>
+
+        <div class="actions">
+          <button id="play" type="submit">Play externally</button>
+          <button id="download" type="button" class="secondary">Download MKV</button>
+          <button id="cancel" type="button" class="danger" disabled>Cancel active job</button>
+        </div>
+      </form>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

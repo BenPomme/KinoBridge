@@ -1,0 +1,4 @@
+interface:
+  display_name: "KinoBridge Media Pipeline"
+  short_description: "Validate KinoBridge HLS and stereo pipelines"
+  default_prompt: "Use $kinobridge-media-pipeline to diagnose or validate a KinoBridge media workflow."

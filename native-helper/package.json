@@ -1,0 +1,22 @@
+{
+  "name": "@kinobridge/native-helper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "bin": {
+    "kinobridge-native-helper": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx src/main.ts",
+    "diagnose": "tsx src/cli.ts diagnose",
+    "install-host": "node scripts/build-bundle.mjs && node scripts/install-host.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@kinobridge/shared": "workspace:*",
+    "zod": "^4.4.3"
+  }
+}

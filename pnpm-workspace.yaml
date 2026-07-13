@@ -1,0 +1,4 @@
+packages:
+  - extension
+  - native-helper
+  - shared
