@@ -18,6 +18,8 @@ Run the native-host installer printed by `pnpm --filter @kinobridge/native-helpe
 
 Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select `extension/dist`. Installing an unpacked extension is a user-confirmed UI action. Copy the displayed extension ID into the native-host installer, rebuild/reinstall the host if it changes, and reload Chrome.
 
+Pin KinoBridge from Chrome's Extensions menu. Click its toolbar icon while viewing a Kino title to open the persistent companion window. The same window remains open across focus changes and is restored—rather than duplicated—when the toolbar icon is clicked again.
+
 Run `pnpm diagnose` whenever Chrome reports that the native host is missing.
 
 For a packaged helper, register its app executable instead of the development launcher:

@@ -17,6 +17,7 @@ import { candidatePreview, classifyPlaylistUrl, isAllowedManualOverride, isHlsPl
 import { isPopupRequest, type PopupRequest, type PopupResponse, type PopupState } from "./messages.js";
 import { isFreshRefreshDescriptor, parseRefreshBinding, type RefreshRequirement } from "./refresh.js";
 import { projectTrack } from "./track-view.js";
+import { WidgetWindowController } from "./widget-window.js";
 import {
   ensureNavigation,
   getCandidates,
@@ -32,12 +33,61 @@ const NATIVE_HOST = "com.kinobridge.helper";
 const STATUS_KEY = "native-status";
 const ACTIVE_JOB_KEY = "active-job-id";
 const OFFLINE_STATE_KEY = "offline-state";
+const WIDGET_SOURCE_TAB_KEY = "widget-source-tab-id";
 const MAX_STATUS_LENGTH = 300;
 let nativePort: chrome.runtime.Port | undefined;
 let reconnectDelayMs = 1_000;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 const pendingNativeRequests = new Map<string, { resolve: (payload: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 const pendingRefreshJobs = new Map<string, RefreshRequirement & { timer: ReturnType<typeof setTimeout> }>();
+const widgetWindow = new WidgetWindowController({
+  getAll: (options) => chrome.windows.getAll(options),
+  create: (options) => chrome.windows.create(options),
+  update: (windowId, options) => chrome.windows.update(windowId, options)
+}, chrome.runtime.getURL("popup.html"));
+
+async function bindWidgetToTab(tab: chrome.tabs.Tab): Promise<void> {
+  if (tab.id === undefined || !isKinoPageUrl(tab.url)) return;
+  await chrome.storage.session.set({ [WIDGET_SOURCE_TAB_KEY]: tab.id });
+  void chrome.runtime.sendMessage({ type: "sourceTabChanged", tabId: tab.id }).catch(() => undefined);
+}
+
+async function clearWidgetSourceTab(tabId?: number): Promise<void> {
+  const stored = (await chrome.storage.session.get(WIDGET_SOURCE_TAB_KEY))[WIDGET_SOURCE_TAB_KEY];
+  if (tabId !== undefined && stored !== tabId) return;
+  await chrome.storage.session.remove(WIDGET_SOURCE_TAB_KEY);
+  void chrome.runtime.sendMessage({ type: "sourceTabChanged" }).catch(() => undefined);
+}
+
+async function getWidgetSourceTab(expectedTabId?: number): Promise<chrome.tabs.Tab | undefined> {
+  const stored = (await chrome.storage.session.get(WIDGET_SOURCE_TAB_KEY))[WIDGET_SOURCE_TAB_KEY];
+  if (!Number.isInteger(stored) || Number(stored) < 0) {
+    if (expectedTabId !== undefined) throw new Error("Reopen KinoBridge from the matching Kino title tab");
+    return undefined;
+  }
+  const tabId = Number(stored);
+  if (expectedTabId !== undefined && expectedTabId !== tabId) {
+    throw new Error("The Kino source tab changed; review the movie and try again");
+  }
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (isKinoPageUrl(tab.url)) return tab;
+  } catch {
+    // The source tab was closed while the companion remained open.
+  }
+  await clearWidgetSourceTab(tabId);
+  if (expectedTabId !== undefined) throw new Error("The Kino source tab is no longer available");
+  return undefined;
+}
+
+async function showWidget(tab: chrome.tabs.Tab): Promise<void> {
+  if (isKinoPageUrl(tab.url)) await bindWidgetToTab(tab);
+  await widgetWindow.show();
+}
+
+chrome.action.onClicked.addListener((tab) => {
+  void showWidget(tab).catch((error: unknown) => setStatus(`Could not open KinoBridge: ${safeError(error)}`));
+});
 
 function safeError(error: unknown): string {
   return error instanceof Error ? redactText(error.message) : "Unexpected extension error";
@@ -340,17 +390,26 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "loading" && !changeInfo.url) return;
   if (isKinoPageUrl(tab.url)) {
-    void ensureNavigation(tabId, tab.url as string, true);
+    void (async () => {
+      await ensureNavigation(tabId, tab.url as string, true);
+      const bound = (await chrome.storage.session.get(WIDGET_SOURCE_TAB_KEY))[WIDGET_SOURCE_TAB_KEY];
+      if (bound === tabId) {
+        void chrome.runtime.sendMessage({ type: "sourceTabChanged", tabId }).catch(() => undefined);
+      }
+    })();
   } else {
     void removeTabState(tabId);
+    void clearWidgetSourceTab(tabId);
   }
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => void removeTabState(tabId));
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void removeTabState(tabId);
+  void clearWidgetSourceTab(tabId);
+});
 
 async function popupState(): Promise<PopupState> {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  const tab = tabs[0];
+  const tab = await getWidgetSourceTab();
   if (tab?.id === undefined || !isKinoPageUrl(tab.url)) {
     const activeJobId = (await chrome.storage.session.get(ACTIVE_JOB_KEY))[ACTIVE_JOB_KEY];
     return {
@@ -498,9 +557,9 @@ async function runAutomaticPlaybackCapture(tabId: number, durationMs: number): P
   }
 }
 
-async function prepareStream(): Promise<PopupState> {
-  const tab = (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
-  if (tab?.id === undefined || !isKinoPageUrl(tab.url)) throw new Error("Open a Kino movie page before using KinoBridge");
+async function prepareStream(sourceTabId: number): Promise<PopupState> {
+  const tab = await getWidgetSourceTab(sourceTabId);
+  if (tab?.id === undefined) throw new Error("Open KinoBridge from a Kino movie page before using it");
   if (await hasReadyVideoDescriptor(tab.id)) return popupState();
   await setStatus("Capturing the authenticated stream automatically…");
   try {
@@ -528,12 +587,11 @@ function sameKinoPage(left: string, right: string): boolean {
   return a.origin === b.origin && a.pathname.replace(/\/$/, "") === b.pathname.replace(/\/$/, "");
 }
 
-async function retryOffline(jobId: string): Promise<void> {
+async function retryOffline(jobId: string, sourceTabId: number): Promise<void> {
   const offline = await getOfflineState();
   const job = offline.queue.find((item) => item.id === jobId);
   if (!job) throw new Error("Offline job was not found");
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  const tab = tabs[0];
+  const tab = await getWidgetSourceTab(sourceTabId);
   if (tab?.id === undefined || !isKinoPageUrl(tab.url) || !sameKinoPage(job.source.pageUrl, tab.url as string)) {
     throw new Error("Open this movie's Kino page, reload it, and play for a few seconds before retrying");
   }
@@ -550,13 +608,12 @@ async function retryOffline(jobId: string): Promise<void> {
   throw new Error("No inspected video playlist is ready; play the Kino video for a few seconds and retry");
 }
 
-async function addOverride(raw: string): Promise<PopupState> {
+async function addOverride(raw: string, sourceTabId: number): Promise<PopupState> {
   const url = new URL(raw);
   if (url.protocol !== "https:" || !url.pathname.toLowerCase().includes(".m3u8") || url.username || url.password) {
     throw new Error("Manual URL must be an HTTPS .m3u8 URL without embedded credentials");
   }
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  const tab = tabs[0];
+  const tab = await getWidgetSourceTab(sourceTabId);
   if (tab?.id === undefined || !isKinoPageUrl(tab.url)) throw new Error("Manual overrides require an active Kino.pub tab");
   const observedCandidates = await getCandidates(tab.id);
   if (!isAllowedManualOverride(url.toString(), tab.url as string, observedCandidates)) {
@@ -599,8 +656,7 @@ function selectQuality(descriptor: StreamDescriptor, quality: string): StreamDes
 }
 
 async function runCommand(request: Extract<PopupRequest, { type: "run" }>): Promise<string> {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  const tab = tabs[0];
+  const tab = await getWidgetSourceTab(request.sourceTabId);
   if (tab?.id === undefined || !isKinoPageUrl(tab.url)) throw new Error("Open the matching Kino.pub tab before starting a job");
   const candidate = (await getCandidates(tab.id)).find((item) => item.id === request.candidateId);
   if (!candidate) throw new Error("The selected stream is no longer available; start Kino.pub playback again");
@@ -631,9 +687,9 @@ async function handlePopupRequest(request: PopupRequest): Promise<unknown> {
     case "getState":
       return popupState();
     case "prepareStream":
-      return prepareStream();
+      return prepareStream(request.sourceTabId);
     case "addOverride":
-      return addOverride(request.url);
+      return addOverride(request.url, request.sourceTabId);
     case "run":
       return { jobId: await runCommand(request) };
     case "cancel":
@@ -642,7 +698,7 @@ async function handlePopupRequest(request: PopupRequest): Promise<unknown> {
       await setStatus("Cancelling media job…");
       return { jobId: request.jobId };
     case "offlineRetry":
-      await retryOffline(request.jobId);
+      await retryOffline(request.jobId, request.sourceTabId);
       return { jobId: request.jobId };
     case "offlineRemove": {
       const response = await requestNative("offlineRemove", { jobId: request.jobId });

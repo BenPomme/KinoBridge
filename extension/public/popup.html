@@ -3,13 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>KinoBridge</title>
+    <title>KinoBridge Widget</title>
     <link rel="stylesheet" href="popup.css">
   </head>
   <body>
     <main>
       <header>
-        <p class="eyebrow">KinoBridge</p>
+        <div class="widget-bar">
+          <p class="eyebrow">KinoBridge</p>
+          <button id="minimize-widget" type="button" class="secondary compact" aria-label="Minimize KinoBridge widget">Minimize</button>
+        </div>
         <h1 id="title">Loading…</h1>
         <p id="status" class="status" role="status" aria-live="polite">Connecting…</p>
         <button id="enable-cdn" type="button" class="permission">Enable Kino CDN detection</button>

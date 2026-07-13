@@ -18,8 +18,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "KinoBridge",
-    "default_popup": "popup.html"
+    "default_title": "Open KinoBridge widget"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"

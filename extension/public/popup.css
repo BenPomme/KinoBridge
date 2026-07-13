@@ -1,8 +1,9 @@
 :root { color-scheme: dark; font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 * { box-sizing: border-box; }
-body { width: 390px; margin: 0; color: #eef2ff; background: #0b1020; }
+body { width: 100%; min-width: 390px; margin: 0; color: #eef2ff; background: #0b1020; }
 main { padding: 18px; }
 header { margin-bottom: 14px; }
+.widget-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 3px; }
 .eyebrow { margin: 0 0 3px; color: #7dd3fc; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 h1 { margin: 0; font-size: 18px; line-height: 1.25; }
 h2 { margin: 0; font-size: 15px; }

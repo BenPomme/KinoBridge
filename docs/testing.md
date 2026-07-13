@@ -6,7 +6,7 @@
 pnpm qa
 ```
 
-Tests cover shared validation, HLS classification, Native Messaging framing, safe proxy routing and refresh lineage, explicit video/audio/subtitle download inputs, duration/track/decode validation, persistent queue restart behavior, local library actions, filter construction, player arguments, filenames, job cancellation, and redaction. Generated HLS integration fixtures prove separate video/audio/WebVTT remuxing and an automatically analyzed VideoToolbox SBS transcode with a dual-eye ASS subtitle. Pixel-level FFmpeg fixtures cover no packing gap, a central gap, outer letterboxing, manual alignment, and eye swapping. Fixtures contain no signed Kino URLs.
+Tests cover shared validation, HLS classification, Native Messaging framing, safe proxy routing and refresh lineage, exact source-tab binding, persistent companion-window creation/restoration/deduplication, explicit video/audio/subtitle download inputs, duration/track/decode validation, persistent queue restart behavior, local library actions, filter construction, player arguments, filenames, job cancellation, and redaction. Generated HLS integration fixtures prove separate video/audio/WebVTT remuxing and an automatically analyzed VideoToolbox SBS transcode with a dual-eye ASS subtitle. Pixel-level FFmpeg fixtures cover no packing gap, a central gap, outer letterboxing, manual alignment, and eye swapping. Fixtures contain no signed Kino URLs.
 
 ## Synthetic stereo
 
@@ -19,7 +19,7 @@ Use the generated red/blue Top/Bottom file to verify left/right ordering before 
 ## Live smoke sequence
 
 1. Open an already-authenticated Kino.pub title and start playback.
-2. Confirm the popup lists several candidates without exposing query tokens.
+2. Click the KinoBridge toolbar icon. Confirm its companion window stays open after focusing the Kino tab, lists several candidates without exposing query tokens, and reuses the same window when clicked again.
 3. Probe the highest-ranked master candidate.
 4. Play through VLC to prove broker authentication, then through mpv to verify tracks.
 5. Expire or refresh the page and confirm a recoverable refresh error.

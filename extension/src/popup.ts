@@ -31,6 +31,13 @@ let currentState: PopupState | undefined;
 let currentJobId: string | undefined;
 let defaultsAppliedTitle: string | undefined;
 
+function currentSourceTabId(): number {
+  if (!currentState?.isKinoTab || currentState.tabId === undefined) {
+    throw new Error("Open KinoBridge from a Kino movie tab first");
+  }
+  return currentState.tabId;
+}
+
 async function send<T>(request: PopupRequest): Promise<T> {
   const response = await chrome.runtime.sendMessage(request) as PopupResponse<T>;
   if (!response?.ok) throw new Error(response?.error ?? "Extension request failed");
@@ -278,6 +285,7 @@ async function run(action: "play" | "download"): Promise<void> {
   const playback = playbackOptions();
   const request: PopupRequest = {
     type: "run",
+    sourceTabId: currentSourceTabId(),
     action,
     candidateId: candidate.value,
     quality: byId<HTMLSelectElement>("quality").value,
@@ -324,7 +332,7 @@ byId<HTMLButtonElement>("add-override").addEventListener("click", () => {
     const originPattern = `${url.origin}/*`;
     const granted = await chrome.permissions.request({ origins: [originPattern] });
     if (!granted) throw new Error("Stream host access was not granted");
-    const state = await send<PopupState>({ type: "addOverride", url: url.toString() });
+    const state = await send<PopupState>({ type: "addOverride", sourceTabId: currentSourceTabId(), url: url.toString() });
     manualUrl.value = "";
     renderState(state);
   })().catch((error: unknown) => setStatus(error instanceof Error ? error.message : "Could not add playlist"));
@@ -353,7 +361,7 @@ offlineQueue.addEventListener("click", (event) => {
   if (!id || !action) return;
   void (async () => {
     if (action === "cancel") await send({ type: "cancel", jobId: id });
-    else if (action === "retry") await send({ type: "offlineRetry", jobId: id });
+    else if (action === "retry") await send({ type: "offlineRetry", sourceTabId: currentSourceTabId(), jobId: id });
     else if (action === "remove-job") await send({ type: "offlineRemove", jobId: id });
     setStatus(action === "retry" ? "Offline download queued with fresh stream access…" : "Offline queue updated");
     await refreshOffline();
@@ -386,7 +394,16 @@ chrome.runtime.onMessage.addListener((message: unknown) => {
       cancelButton.disabled = true;
     }
   }
-  if (record.type === "candidatesChanged" || record.type === "offlineChanged") void send<PopupState>({ type: "getState" }).then(renderState).catch(() => undefined);
+  if (record.type === "candidatesChanged" || record.type === "offlineChanged" || record.type === "sourceTabChanged") {
+    void send<PopupState>({ type: "getState" }).then(renderState).catch(() => undefined);
+  }
+});
+
+byId<HTMLButtonElement>("minimize-widget").addEventListener("click", () => {
+  void chrome.windows.getCurrent().then((window) => {
+    if (window.id !== undefined) return chrome.windows.update(window.id, { state: "minimized" });
+    return undefined;
+  }).catch((error: unknown) => setStatus(error instanceof Error ? error.message : "Could not minimize KinoBridge"));
 });
 
 void (async () => {
@@ -394,7 +411,7 @@ void (async () => {
   renderState(state);
   if (state.isKinoTab && !state.candidates.some((item) => item.ready)) {
     setStatus("Capturing the authenticated stream automatically…");
-    state = await send<PopupState>({ type: "prepareStream" });
+    state = await send<PopupState>({ type: "prepareStream", sourceTabId: currentSourceTabId() });
     renderState(state);
   }
 })().catch((error: unknown) => {
