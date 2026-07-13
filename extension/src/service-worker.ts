@@ -16,6 +16,7 @@ import {
 import { candidatePreview, classifyPlaylistUrl, isAllowedManualOverride, isHlsPlaylistUrl, isKinoPageUrl, rankClassification } from "./candidates.js";
 import { isPopupRequest, type PopupRequest, type PopupResponse, type PopupState } from "./messages.js";
 import { isFreshRefreshDescriptor, parseRefreshBinding, type RefreshRequirement } from "./refresh.js";
+import { projectTrack } from "./track-view.js";
 import {
   ensureNavigation,
   getCandidates,
@@ -249,7 +250,11 @@ async function refreshNativeCandidate(rawPayload: unknown): Promise<void> {
   // refresh window, while leaving a small margin for message delivery.
   const timer = setTimeout(() => pendingRefreshJobs.delete(payload.jobId as string), 59_000);
   pendingRefreshJobs.set(payload.jobId, { ...requirement, timer });
-  await setStatus("Stream access expired: press Play in the original Kino tab for a few seconds to refresh the download");
+  await setStatus("Stream access expired: refreshing from the Kino player automatically…");
+  void runAutomaticPlaybackCapture(binding.tabId, 5_000).catch(async (error: unknown) => {
+    const message = error instanceof Error ? error.message : "automatic playback failed";
+    await setStatus(`Stream refresh needs the original Kino tab: ${message}`);
+  });
 }
 
 async function fulfillPendingRefresh(descriptor: StreamDescriptor): Promise<void> {
@@ -364,7 +369,9 @@ async function popupState(): Promise<PopupState> {
       title: candidate.pageTitle,
       preview: candidatePreview(candidate, classification),
       classification,
-      observedAt: candidate.observedAt
+      observedAt: candidate.observedAt,
+      ready: Boolean(descriptor && (descriptor.classification === "master" || descriptor.classification === "video")),
+      tracks: (descriptor?.tracks ?? []).map(projectTrack)
     };
   }));
   candidateViews.sort((left, right) =>
@@ -381,6 +388,134 @@ async function popupState(): Promise<PopupState> {
     ...(typeof activeJobId === "string" ? { activeJobId } : {}),
     offline: await getOfflineState()
   };
+}
+
+async function hasReadyVideoDescriptor(tabId: number): Promise<boolean> {
+  for (const candidate of await getCandidates(tabId)) {
+    const descriptor = await getDescriptor(tabId, candidate.id);
+    if (descriptor?.classification === "master" || descriptor?.classification === "video") return true;
+  }
+  return false;
+}
+
+async function waitForReadyVideoDescriptor(tabId: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await hasReadyVideoDescriptor(tabId)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return hasReadyVideoDescriptor(tabId);
+}
+
+async function waitForTabComplete(tabId: number, timeoutMs = 15_000): Promise<void> {
+  if ((await chrome.tabs.get(tabId)).status === "complete") return;
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error("Kino page reload timed out"));
+    }, timeoutMs);
+    const listener = (updatedTabId: number, changeInfo: { status?: string }): void => {
+      if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+async function runAutomaticPlaybackCapture(tabId: number, durationMs: number): Promise<void> {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    args: [durationMs],
+    func: async (playDurationMs: number) => {
+      const deadline = Date.now() + 3_000;
+      let video: HTMLVideoElement | undefined;
+      while (!video && Date.now() < deadline) {
+        const visible = [...document.querySelectorAll("video")].filter((item) => {
+          const rect = item.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        });
+        video = visible.sort((left, right) => {
+          const a = left.getBoundingClientRect();
+          const b = right.getBoundingClientRect();
+          return b.width * b.height - a.width * a.height;
+        })[0];
+        if (!video) await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (!video) return { ok: false, reason: "no-video" };
+      const snapshot = {
+        paused: video.paused,
+        currentTime: Number.isFinite(video.currentTime) ? video.currentTime : 0,
+        muted: video.muted,
+        volume: video.volume,
+        playbackRate: video.playbackRate
+      };
+      try {
+        video.muted = true;
+        if (!video.currentSrc) {
+          const videoRect = video.getBoundingClientRect();
+          const playName = /^(?:play|play\s*\/\s*pause|воспроизвести|воспроизведение|reproducir|lecture)$/iu;
+          const playControl = [...document.querySelectorAll<HTMLElement>("button, [role='button']")].find((control) => {
+            const name = (control.getAttribute("aria-label") ?? control.getAttribute("title") ?? control.textContent ?? "").trim();
+            if (!playName.test(name)) return false;
+            const rect = control.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            return centerX >= videoRect.left && centerX <= videoRect.right && centerY >= videoRect.top && centerY <= videoRect.bottom;
+          });
+          playControl?.click();
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        await Promise.race([
+          video.play(),
+          new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("playback-timeout")), 4_000))
+        ]);
+        await new Promise((resolve) => setTimeout(resolve, playDurationMs));
+        return { ok: true };
+      } catch {
+        return { ok: false, reason: "playback-blocked" };
+      } finally {
+        if (snapshot.paused) {
+          video.pause();
+          try { video.currentTime = snapshot.currentTime; } catch { /* Some streams reject seeks while loading. */ }
+        }
+        video.muted = snapshot.muted;
+        video.volume = snapshot.volume;
+        video.playbackRate = snapshot.playbackRate;
+      }
+    }
+  });
+  const result = results[0]?.result as { ok?: boolean; reason?: string } | undefined;
+  if (!result?.ok) {
+    throw new Error(result?.reason === "no-video"
+      ? "Kino player is not ready on this page"
+      : "Chrome blocked automatic Kino playback; click the page once and reopen KinoBridge");
+  }
+}
+
+async function prepareStream(): Promise<PopupState> {
+  const tab = (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+  if (tab?.id === undefined || !isKinoPageUrl(tab.url)) throw new Error("Open a Kino movie page before using KinoBridge");
+  if (await hasReadyVideoDescriptor(tab.id)) return popupState();
+  await setStatus("Capturing the authenticated stream automatically…");
+  try {
+    await runAutomaticPlaybackCapture(tab.id, 2_500);
+  } catch {
+    // A cold Kino page can create its video element only after a reload. The
+    // cache-bypass retry below is the authoritative second attempt.
+  }
+  if (!await waitForReadyVideoDescriptor(tab.id, 2_500)) {
+    await setStatus("Refreshing the Kino player cache automatically…");
+    await chrome.tabs.reload(tab.id, { bypassCache: true });
+    await waitForTabComplete(tab.id);
+    await runAutomaticPlaybackCapture(tab.id, 5_000);
+    if (!await waitForReadyVideoDescriptor(tab.id, 4_000)) {
+      throw new Error("KinoBridge could not detect a video playlist after automatic playback");
+    }
+  }
+  await setStatus("Stream inspected and ready");
+  return popupState();
 }
 
 function sameKinoPage(left: string, right: string): boolean {
@@ -491,6 +626,8 @@ async function handlePopupRequest(request: PopupRequest): Promise<unknown> {
   switch (request.type) {
     case "getState":
       return popupState();
+    case "prepareStream":
+      return prepareStream();
     case "addOverride":
       return addOverride(request.url);
     case "run":

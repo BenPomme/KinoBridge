@@ -46,7 +46,9 @@ export function parseHls(text: string, baseUrl: string): ParsedHls {
         ...(attrs.BANDWIDTH && /^\d+$/.test(attrs.BANDWIDTH) ? { bandwidth: Number(attrs.BANDWIDTH) } : {}),
         ...(resolution?.[1] && resolution[2] ? { width: Number(resolution[1]), height: Number(resolution[2]) } : {}),
         ...(attrs.CODECS ? { codecs: attrs.CODECS } : {}),
-        ...(attrs["FRAME-RATE"] && Number.isFinite(Number(attrs["FRAME-RATE"])) ? { frameRate: Number(attrs["FRAME-RATE"]) } : {})
+        ...(attrs["FRAME-RATE"] && Number.isFinite(Number(attrs["FRAME-RATE"])) ? { frameRate: Number(attrs["FRAME-RATE"]) } : {}),
+        ...(attrs.AUDIO ? { audioGroupId: attrs.AUDIO } : {}),
+        ...(attrs.SUBTITLES ? { subtitleGroupId: attrs.SUBTITLES } : {})
       });
     } else if (line.startsWith("#EXT-X-MEDIA:")) {
       const attrs = attributes(line.slice(line.indexOf(":") + 1));
@@ -60,6 +62,7 @@ export function parseHls(text: string, baseUrl: string): ParsedHls {
         ...(attrs.NAME ? { name: attrs.NAME } : {}),
         ...(attrs["GROUP-ID"] ? { groupId: attrs["GROUP-ID"] } : {}),
         default: attrs.DEFAULT?.toUpperCase() === "YES",
+        autoselect: attrs.DEFAULT?.toUpperCase() === "YES" || attrs.AUTOSELECT?.toUpperCase() === "YES",
         forced: attrs.FORCED?.toUpperCase() === "YES"
       });
     } else if (line.startsWith("#EXTINF:")) {
@@ -104,13 +107,27 @@ export function requestHeaders(candidate: StreamCandidate): Record<string, strin
 
 export async function fetchPlaylist(candidate: StreamCandidate, signal?: AbortSignal): Promise<{ text: string; finalUrl: string }> {
   const allowed = new Set([new URL(candidate.url).origin]);
-  let current = assertSafeUpstream(candidate.url, allowed);
+  let current: URL;
+  try {
+    current = assertSafeUpstream(candidate.url, allowed);
+  } catch {
+    throw new KinoBridgeError("UNSAFE_PLAYLIST_URL", "The selected playlist URL is outside the authorized HTTPS origin");
+  }
   for (let redirects = 0; redirects <= 3; redirects += 1) {
-    const response = await fetch(current, { headers: requestHeaders(candidate), redirect: "manual", ...(signal ? { signal } : {}) });
+    let response: Response;
+    try {
+      response = await fetch(current, { headers: requestHeaders(candidate), redirect: "manual", ...(signal ? { signal } : {}) });
+    } catch {
+      throw new KinoBridgeError("PLAYLIST_FETCH_FAILED", "The authenticated playlist request could not be completed", true);
+    }
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location || redirects === 3) throw new KinoBridgeError("UPSTREAM_REDIRECT", "Upstream redirect could not be followed");
-      current = assertSafeUpstream(new URL(location, current).toString(), allowed);
+      try {
+        current = assertSafeUpstream(new URL(location, current).toString(), allowed);
+      } catch {
+        throw new KinoBridgeError("UNSAFE_PLAYLIST_REDIRECT", "The playlist redirected outside its authorized origin");
+      }
       continue;
     }
     if (response.status === 401 || response.status === 403) throw new KinoBridgeError("AUTH_EXPIRED", "Stream authorization expired", true);

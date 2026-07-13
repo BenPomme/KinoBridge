@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1SDdiMOeHGGbV8DCHhn1PtNJWYA8UTTVs78zHSb3tCprmYXSGxCzyHWZ2TxP0FClTWl/l9KYyzwJdeGsqdmx29dLK09VhrTj55OwNSdhvxVejgtAg0zY9gbzggmcZKb6MjVAz3qTb4YSy+jrZTv1PCqXfELDiz/KJCq7Qnhx10u6rqOfIuELEcgIUJczZ3b2FywT1XMyDbuuIJB/fB+Rg83RwFzjRdSoXHXkmrkNbcuLhl5ShD5x/G/KoLLU4jUPsfetoXeYijPBP4JYyIPIM0mNc6B4I6mPZxQtBE2afGZMnudeMdwkPUe3pz6U8/D8k5oG/J85evcjQgILQTuc+QIDAQAB",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "tabs", "webRequest", "nativeMessaging"],
+  "permissions": ["storage", "tabs", "scripting", "webRequest", "nativeMessaging"],
   "host_permissions": [
     "https://kino.pub/*",
     "https://*.kino.pub/*",

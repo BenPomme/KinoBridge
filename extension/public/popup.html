@@ -33,10 +33,10 @@
           <select id="quality"><option value="auto">Auto</option><option value="2160p">4K</option><option value="1080p">1080p</option><option value="720p">720p</option></select>
           <label for="player">Player</label>
           <select id="player"><option value="mpv">mpv</option><option value="iina">IINA</option><option value="vlc">VLC</option></select>
-          <label for="audio">Audio order</label>
-          <input id="audio" value="fr,en" autocomplete="off">
-          <label for="subtitles">Subtitle order</label>
-          <input id="subtitles" value="fr,en" autocomplete="off">
+          <label for="audio-track">Soundtrack</label>
+          <select id="audio-track"><option value="">Automatic: Original, then English</option></select>
+          <label for="subtitle-track">Subtitles</label>
+          <select id="subtitle-track"><option value="">Automatic: English</option></select>
           <label for="input-stereo">Input 3D</label>
           <select id="input-stereo"><option value="auto">Auto</option><option value="2d">2D</option><option value="half-tb">Half Top/Bottom</option><option value="full-tb">Full Top/Bottom</option><option value="half-sbs">Half SBS</option><option value="full-sbs">Full SBS</option></select>
           <label for="output-profile">Output</label>
@@ -55,6 +55,8 @@
             <label for="h-align">Horizontal align</label><input id="h-align" type="number" min="-500" max="500" value="0">
             <label for="v-align">Vertical align</label><input id="v-align" type="number" min="-500" max="500" value="0">
             <label for="zoom">Zoom</label><input id="zoom" type="number" min="0.25" max="4" step="0.01" value="1">
+            <label for="audio">Audio fallback order</label><input id="audio" value="original,en" autocomplete="off">
+            <label for="subtitles">Subtitle fallback order</label><input id="subtitles" value="en" autocomplete="off">
             <label for="download-dir">Output folder</label><input id="download-dir" value="~/Downloads">
             <label for="filename">Filename</label><input id="filename" value="KinoBridge-download">
             <label for="codec">Download codec</label><select id="codec"><option value="copy">Original (remux)</option><option value="h264-videotoolbox">H.264 VideoToolbox</option><option value="hevc-videotoolbox">HEVC VideoToolbox</option></select>

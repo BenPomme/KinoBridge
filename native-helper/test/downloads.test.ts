@@ -99,6 +99,25 @@ describe("download planning", () => {
     expect(args).toContain("language=fr");
   });
 
+  it("maps URI-less selected audio from the video input and preserves its language", () => {
+    const parsed = descriptor();
+    const embedded = { ...parsed.tracks[0]!, uri: undefined, id: "original", name: "Original", language: "eng" };
+    const resources = {
+      videoUrl: "http://127.0.0.1:49152/capability/video.m3u8",
+      audioTrack: embedded
+    };
+    const args = buildFfmpegArguments(resources, parsed, DownloadOptionsSchema.parse({
+      outputDirectory: "/tmp",
+      filename: "Fixture",
+      embedSubtitles: false
+    }), "/tmp/.Fixture.part.mkv");
+    const inputs = args.flatMap((arg, index) => arg === "-i" ? [args[index + 1]] : []);
+    const maps = args.flatMap((arg, index) => arg === "-map" ? [args[index + 1]] : []);
+    expect(inputs).toEqual([resources.videoUrl]);
+    expect(maps).toEqual(["0:v:0", "0:a:0?"]);
+    expect(args).toContain("language=eng");
+  });
+
   it("does not open or map a subtitle input when embedding is disabled", () => {
     const options = DownloadOptionsSchema.parse({ outputDirectory: "/tmp", filename: "Fixture", embedSubtitles: false });
     const args = buildFfmpegArguments(localResources(), descriptor(), options, "/tmp/.Fixture.part.mkv");

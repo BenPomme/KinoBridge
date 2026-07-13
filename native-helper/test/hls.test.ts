@@ -1,19 +1,20 @@
-import { describe, expect, it } from "vitest";
-import { parseHls } from "../src/hls.js";
+import { describe, expect, it, vi } from "vitest";
+import { StreamCandidateSchema } from "@kinobridge/shared";
+import { fetchPlaylist, parseHls } from "../src/hls.js";
 
 describe("HLS parsing", () => {
   it("classifies a master and resolves variants and tracks", () => {
     const parsed = parseHls(`#EXTM3U
-#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="French",LANGUAGE="fr",DEFAULT=YES,URI="audio/fr.m3u8"
-#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",LANGUAGE="en",URI="../subs/en.m3u8"
-#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,CODECS="avc1.640028,mp4a.40.2",FRAME-RATE=23.976
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Original",LANGUAGE="eng",DEFAULT=YES
+#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",LANGUAGE="eng",AUTOSELECT=YES,URI="../subs/en.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,CODECS="avc1.640028,mp4a.40.2",FRAME-RATE=23.976,AUDIO="audio",SUBTITLES="subs"
 video/main.m3u8
 `, "https://media.example.test/show/master.m3u8?token=secret");
     expect(parsed.classification).toBe("master");
-    expect(parsed.variants[0]).toMatchObject({ uri: "https://media.example.test/show/video/main.m3u8", width: 1920, height: 1080 });
+    expect(parsed.variants[0]).toMatchObject({ uri: "https://media.example.test/show/video/main.m3u8", width: 1920, height: 1080, audioGroupId: "audio", subtitleGroupId: "subs" });
     expect(parsed.tracks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "audio", language: "fr", default: true, uri: "https://media.example.test/show/audio/fr.m3u8" }),
-      expect.objectContaining({ type: "subtitle", language: "en", uri: "https://media.example.test/subs/en.m3u8" })
+      expect.objectContaining({ type: "audio", language: "eng", default: true, autoselect: true, name: "Original" }),
+      expect.objectContaining({ type: "subtitle", language: "eng", autoselect: true, uri: "https://media.example.test/subs/en.m3u8" })
     ]));
   });
 
@@ -35,5 +36,17 @@ two.ts
 
   it("rejects non-HLS input", () => {
     expect(() => parseHls("not a playlist", "https://media.example.test/a.m3u8")).toThrow("not an HLS");
+  });
+
+  it("converts a raw network failure into an actionable redacted playlist error", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new TypeError("fetch failed for https://secret.example/?token=secret"));
+    const candidate = StreamCandidateSchema.parse({
+      id: "candidate", tabId: 1, navigationId: "nav", requestId: "request",
+      url: "https://media.example.test/master.m3u8?token=secret",
+      pageUrl: "https://zerkalo.xyz/item/view/1", pageTitle: "Fixture", observedAt: 1,
+      access: { headers: [] }
+    });
+    await expect(fetchPlaylist(candidate)).rejects.toThrow("authenticated playlist request could not be completed");
+    fetch.mockRestore();
   });
 });

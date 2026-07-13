@@ -7,6 +7,18 @@ export interface CandidateView {
   preview: string;
   classification: PlaylistClassification;
   observedAt: number;
+  ready: boolean;
+  tracks: TrackView[];
+}
+
+export interface TrackView {
+  id: string;
+  type: "audio" | "subtitle";
+  name?: string;
+  language?: string;
+  default: boolean;
+  autoselect: boolean;
+  forced: boolean;
 }
 
 export interface PopupState {
@@ -23,6 +35,7 @@ export interface PopupState {
 
 export type PopupRequest =
   | { type: "getState" }
+  | { type: "prepareStream" }
   | { type: "addOverride"; url: string }
   | {
       type: "run";
@@ -48,5 +61,5 @@ export interface PopupResponse<T = unknown> {
 export function isPopupRequest(value: unknown): value is PopupRequest {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
-  return ["getState", "addOverride", "run", "cancel", "offlineRetry", "offlineRemove", "libraryPlay", "libraryReveal", "libraryDelete"].includes(String(record.type));
+  return ["getState", "prepareStream", "addOverride", "run", "cancel", "offlineRetry", "offlineRemove", "libraryPlay", "libraryReveal", "libraryDelete"].includes(String(record.type));
 }

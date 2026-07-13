@@ -4,7 +4,8 @@ import {
   type DownloadOptions,
   type PlaybackOptions
 } from "@kinobridge/shared";
-import type { PopupRequest, PopupResponse, PopupState } from "./messages.js";
+import type { CandidateView, PopupRequest, PopupResponse, PopupState, TrackView } from "./messages.js";
+import { automaticMovieDefaults } from "./defaults.js";
 
 function byId<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -16,6 +17,8 @@ const title = byId<HTMLHeadingElement>("title");
 const status = byId<HTMLParagraphElement>("status");
 const controls = byId<HTMLFormElement>("controls");
 const candidate = byId<HTMLSelectElement>("candidate");
+const audioTrack = byId<HTMLSelectElement>("audio-track");
+const subtitleTrack = byId<HTMLSelectElement>("subtitle-track");
 const manualUrl = byId<HTMLInputElement>("manual-url");
 const playButton = byId<HTMLButtonElement>("play");
 const downloadButton = byId<HTMLButtonElement>("download");
@@ -26,6 +29,7 @@ const offlineQueue = byId<HTMLDivElement>("offline-queue");
 const offlineLibrary = byId<HTMLDivElement>("offline-library");
 let currentState: PopupState | undefined;
 let currentJobId: string | undefined;
+let defaultsAppliedTitle: string | undefined;
 
 async function send<T>(request: PopupRequest): Promise<T> {
   const response = await chrome.runtime.sendMessage(request) as PopupResponse<T>;
@@ -42,12 +46,73 @@ function setStatus(message: string): void {
   status.textContent = message;
 }
 
+function trackLabel(track: TrackView): string {
+  const identity = track.name ?? track.language ?? track.id;
+  const language = track.language && track.language.toLowerCase() !== identity.toLowerCase() ? ` · ${track.language}` : "";
+  return `${identity}${language}${track.default ? " · default" : ""}${track.forced ? " · forced" : ""}`;
+}
+
+function isEnglish(track: TrackView): boolean {
+  const language = track.language?.toLowerCase().split("-", 1)[0];
+  const name = track.name?.trim().toLowerCase();
+  return language === "en" || language === "eng" || name === "english";
+}
+
+function isOriginal(track: TrackView): boolean {
+  return /(?:^|[\s([\]_-])(?:original(?:\s+(?:audio|soundtrack|version))?|originale|version originale|оригинал(?:ьная)?(?:\s+дорожка)?|ov)(?:$|[\s)\[\]_-])/iu.test(track.name?.normalize("NFKC").toLowerCase() ?? "");
+}
+
+function renderTrackOptions(view: CandidateView | undefined): void {
+  const previousAudio = audioTrack.value;
+  const previousSubtitle = subtitleTrack.value;
+  const audio = view?.tracks.filter((track) => track.type === "audio") ?? [];
+  const subtitles = view?.tracks.filter((track) => track.type === "subtitle") ?? [];
+  const fill = (select: HTMLSelectElement, tracks: TrackView[], automatic: string): void => {
+    select.replaceChildren();
+    const auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = automatic;
+    select.append(auto);
+    for (const track of tracks) {
+      const option = document.createElement("option");
+      option.value = track.id;
+      option.textContent = trackLabel(track);
+      select.append(option);
+    }
+  };
+  fill(audioTrack, audio, "Automatic: Original, then English");
+  fill(subtitleTrack, subtitles, "Automatic: English");
+  audioTrack.value = audio.some((track) => track.id === previousAudio)
+    ? previousAudio
+    : audio.find(isOriginal)?.id ?? audio.find(isEnglish)?.id ?? "";
+  subtitleTrack.value = subtitles.some((track) => track.id === previousSubtitle)
+    ? previousSubtitle
+    : subtitles.find((track) => isEnglish(track) && !track.forced)?.id ?? subtitles.find(isEnglish)?.id ?? "";
+}
+
 function renderState(state: PopupState): void {
   currentState = state;
   currentJobId = state.activeJobId;
   title.textContent = state.title;
   const filenameInput = byId<HTMLInputElement>("filename");
-  if (state.isKinoTab && filenameInput.value === "KinoBridge-download") filenameInput.value = state.title.slice(0, 180);
+  if (state.isKinoTab && defaultsAppliedTitle !== state.title) {
+    defaultsAppliedTitle = state.title;
+    const defaults = automaticMovieDefaults(state.title);
+    filenameInput.value = defaults.filename;
+    byId<HTMLInputElement>("download-dir").value = defaults.outputDirectory;
+    if (defaults.outputProfile) {
+      byId<HTMLSelectElement>("input-stereo").value = defaults.inputStereo!;
+      byId<HTMLSelectElement>("output-profile").value = defaults.outputProfile;
+      byId<HTMLInputElement>("output-width").value = String(defaults.outputWidth);
+      byId<HTMLInputElement>("output-height").value = String(defaults.outputHeight);
+      byId<HTMLInputElement>("aspect").value = String(defaults.aspectCorrection);
+      byId<HTMLInputElement>("h-align").value = String(defaults.horizontalAlignment);
+      byId<HTMLInputElement>("v-align").value = String(defaults.verticalAlignment);
+      byId<HTMLInputElement>("zoom").value = String(defaults.zoom);
+      byId<HTMLSelectElement>("codec").value = defaults.codec!;
+    }
+  }
+  const previousCandidate = candidate.value;
   candidate.replaceChildren();
   for (const item of state.candidates) {
     const option = document.createElement("option");
@@ -58,9 +123,11 @@ function renderState(state: PopupState): void {
   if (state.candidates.length === 0) {
     const option = document.createElement("option");
     option.value = "";
-    option.textContent = state.isKinoTab ? "Start playback to detect HLS" : "No active Kino.pub tab";
+    option.textContent = state.isKinoTab ? "Detecting the Kino stream automatically…" : "No active Kino.pub tab";
     candidate.append(option);
   }
+  if (state.candidates.some((item) => item.id === previousCandidate)) candidate.value = previousCandidate;
+  renderTrackOptions(state.candidates.find((item) => item.id === candidate.value));
   controls.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("input, select, button")
     .forEach((element) => { element.disabled = !state.isKinoTab; });
   cancelButton.disabled = !currentJobId;
@@ -153,6 +220,8 @@ function numberValue(id: string): number {
 function playbackOptions(): PlaybackOptions {
   return PlaybackOptionsSchema.parse({
     player: byId<HTMLSelectElement>("player").value,
+    ...(audioTrack.value ? { audioTrackId: audioTrack.value } : {}),
+    ...(subtitleTrack.value ? { subtitleTrackId: subtitleTrack.value } : {}),
     audioLanguages: listValue("audio"),
     subtitleLanguages: listValue("subtitles"),
     subtitlesEnabled: byId<HTMLInputElement>("subtitles-enabled").checked,
@@ -169,6 +238,29 @@ function playbackOptions(): PlaybackOptions {
     refreshRate: numberValue("refresh-rate")
   });
 }
+
+candidate.addEventListener("change", () => {
+  renderTrackOptions(currentState?.candidates.find((item) => item.id === candidate.value));
+});
+
+function applyXrealDefaults(): void {
+  byId<HTMLSelectElement>("output-profile").value = "xreal-sbs";
+  byId<HTMLInputElement>("output-width").value = "3840";
+  byId<HTMLInputElement>("output-height").value = "1080";
+  byId<HTMLInputElement>("aspect").value = "1";
+  byId<HTMLInputElement>("h-align").value = "0";
+  byId<HTMLInputElement>("v-align").value = "0";
+  byId<HTMLInputElement>("zoom").value = "1";
+  byId<HTMLSelectElement>("codec").value = "h264-videotoolbox";
+}
+
+byId<HTMLSelectElement>("input-stereo").addEventListener("change", (event) => {
+  const value = (event.currentTarget as HTMLSelectElement).value;
+  if (value === "half-tb" || value === "full-tb") applyXrealDefaults();
+});
+byId<HTMLSelectElement>("output-profile").addEventListener("change", (event) => {
+  if ((event.currentTarget as HTMLSelectElement).value === "xreal-sbs") applyXrealDefaults();
+});
 
 function downloadOptions(playback: PlaybackOptions): DownloadOptions {
   return DownloadOptionsSchema.parse({
@@ -297,8 +389,16 @@ chrome.runtime.onMessage.addListener((message: unknown) => {
   if (record.type === "candidatesChanged" || record.type === "offlineChanged") void send<PopupState>({ type: "getState" }).then(renderState).catch(() => undefined);
 });
 
-void send<PopupState>({ type: "getState" }).then(renderState).catch((error: unknown) => {
-  title.textContent = "KinoBridge unavailable";
+void (async () => {
+  let state = await send<PopupState>({ type: "getState" });
+  renderState(state);
+  if (state.isKinoTab && !state.candidates.some((item) => item.ready)) {
+    setStatus("Capturing the authenticated stream automatically…");
+    state = await send<PopupState>({ type: "prepareStream" });
+    renderState(state);
+  }
+})().catch((error: unknown) => {
+  if (!currentState) title.textContent = "KinoBridge unavailable";
   setStatus(error instanceof Error ? error.message : "Could not load extension state");
   setBusy(false);
 });

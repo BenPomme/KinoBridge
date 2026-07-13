@@ -34,6 +34,10 @@ test("loads the MV3 worker and safe popup UI", async () => {
   await expect(page.getByText("KinoBridge", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Enable Kino CDN detection" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Play externally" })).toBeDisabled();
+  await expect(page.getByLabel("Soundtrack")).toHaveValue("");
+  await expect(page.getByLabel("Soundtrack").locator("option")).toHaveText(["Automatic: Original, then English"]);
+  await expect(page.getByLabel("Subtitles", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("Subtitles", { exact: true }).locator("option")).toHaveText(["Automatic: English"]);
   await expect(page.getByRole("heading", { name: "Offline downloads" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Offline library" })).toBeVisible();
 

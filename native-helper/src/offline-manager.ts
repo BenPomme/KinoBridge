@@ -13,7 +13,7 @@ import {
 import { AccessBroker } from "./broker.js";
 import { startDownload, type DownloadHandle, type DownloadProgress, type DownloadResources } from "./downloads.js";
 import { KinoBridgeError, safeError } from "./errors.js";
-import { probeCandidate } from "./hls.js";
+import { parseHls, probeCandidate } from "./hls.js";
 import { selectPlaybackResources } from "./media-selection.js";
 import { OfflineStore } from "./offline-store.js";
 
@@ -29,6 +29,7 @@ interface BrokerLike {
 interface OfflineDependencies {
   createBroker(candidate: StreamCandidate, onAuthExpired: () => void, playlistUrls: readonly string[]): BrokerLike;
   probe(candidate: StreamCandidate): Promise<StreamDescriptor>;
+  inspectBroker(localUrl: string, kind: "video" | "audio" | "subtitle", signal: AbortSignal): Promise<{ encrypted: boolean; durationSeconds?: number }>;
   download(resources: DownloadResources, descriptor: StreamDescriptor, options: DownloadOptions, onProgress: (progress: DownloadProgress) => void): Promise<DownloadHandle>;
 }
 
@@ -36,14 +37,58 @@ interface ActiveDownload {
   id: string;
   broker?: BrokerLike;
   handle?: DownloadHandle;
+  setupController: AbortController;
   aborted?: "canceled" | "interrupted";
 }
 
 const defaultDependencies: OfflineDependencies = {
   createBroker: (candidate, onAuthExpired, playlistUrls) => new AccessBroker(candidate, onAuthExpired, playlistUrls),
   probe: probeCandidate,
+  inspectBroker: inspectBrokerPlaylist,
   download: startDownload
 };
+
+async function inspectBrokerPlaylist(localUrl: string, kind: "video" | "audio" | "subtitle", signal: AbortSignal): Promise<{ encrypted: boolean; durationSeconds?: number }> {
+  const controller = new AbortController();
+  const abort = (): void => controller.abort();
+  signal.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(abort, 15_000);
+  try {
+    const url = new URL(localUrl);
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port) throw new Error("not a broker URL");
+    const response = await fetch(url, { redirect: "error", signal: controller.signal });
+    if (!response.ok) throw new Error("broker request failed");
+    const length = Number(response.headers.get("content-length"));
+    if (Number.isFinite(length) && length > 8 * 1024 * 1024) throw new Error("playlist too large");
+    if (!response.body) throw new Error("playlist body missing");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let size = 0;
+    let text = "";
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      size += chunk.value.byteLength;
+      if (size > 8 * 1024 * 1024) {
+        await reader.cancel();
+        throw new Error("playlist too large");
+      }
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    text += decoder.decode();
+    const parsed = parseHls(text, url.toString());
+    return { encrypted: parsed.encrypted, ...(parsed.durationSeconds === undefined ? {} : { durationSeconds: parsed.durationSeconds }) };
+  } catch {
+    throw new KinoBridgeError(
+      `SELECTED_${kind.toUpperCase()}_PROBE_FAILED`,
+      `Could not inspect the selected ${kind} playlist through the authenticated broker`,
+      true
+    );
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", abort);
+  }
+}
 
 function cleanPageUrl(raw: string): string {
   const url = new URL(raw);
@@ -116,6 +161,7 @@ export class OfflineManager {
     if (!job) throw new KinoBridgeError("JOB_NOT_FOUND", "Offline job was not found");
     if (this.active?.id === id) {
       this.active.aborted = "canceled";
+      this.active.setupController.abort();
       this.active.handle?.cancel();
     }
     this.descriptors.delete(id);
@@ -148,6 +194,7 @@ export class OfflineManager {
     if (!this.active) return;
     const id = this.active.id;
     this.active.aborted = "interrupted";
+    this.active.setupController.abort();
     this.active.handle?.cancel();
     await this.store.updateJob(id, { state: "interrupted", error: "Native helper stopped; capture a fresh authorized stream to restart" });
     this.emitSnapshot(id);
@@ -175,7 +222,7 @@ export class OfflineManager {
 
   private async run(job: OfflineQueueItem, rawDescriptor: StreamDescriptor): Promise<void> {
     await this.store.updateJob(job.id, { state: "running", error: undefined, progress: { percent: 0, seconds: 0 } });
-    const operation: ActiveDownload = { id: job.id };
+    const operation: ActiveDownload = { id: job.id, setupController: new AbortController() };
     this.active = operation;
     const persisted = this.store.getJob(job.id);
     if (persisted?.state === "canceled" || persisted?.state === "interrupted") operation.aborted = persisted.state;
@@ -184,9 +231,8 @@ export class OfflineManager {
     let materializedOutputPath: string | undefined;
     try {
       this.assertNotAborted(operation);
-      const descriptor = await this.hydrateDescriptor(rawDescriptor, job.options);
-      this.assertNotAborted(operation);
-      const selected = selectPlaybackResources(descriptor, job.options);
+      let descriptor = rawDescriptor;
+      let selected = selectPlaybackResources(descriptor, job.options);
       broker = this.dependencies.createBroker(
         descriptor.candidate,
         () => this.emit("refreshRequired", {
@@ -208,10 +254,27 @@ export class OfflineManager {
       this.assertNotAborted(operation);
       const videoUrl = await broker.start(selected.videoUrl);
       this.assertNotAborted(operation);
+      const audioUrl = selected.audioTrack?.uri ? broker.expose(selected.audioTrack.uri) : undefined;
+      const subtitleUrl = job.options.embedSubtitles && selected.subtitleTrack?.uri ? broker.expose(selected.subtitleTrack.uri) : undefined;
+      const inspected = await Promise.all([
+        this.dependencies.inspectBroker(videoUrl, "video", operation.setupController.signal),
+        ...(audioUrl ? [this.dependencies.inspectBroker(audioUrl, "audio", operation.setupController.signal)] : []),
+        ...(subtitleUrl ? [this.dependencies.inspectBroker(subtitleUrl, "subtitle", operation.setupController.signal)] : [])
+      ]);
+      if (descriptor.encrypted || inspected.some((playlist) => playlist.encrypted)) {
+        throw new KinoBridgeError("UNSUPPORTED_ENCRYPTION", "Encrypted or DRM-protected HLS cannot be downloaded");
+      }
+      descriptor = StreamDescriptorSchema.parse({
+        ...descriptor,
+        ...(inspected[0]?.durationSeconds === undefined ? {} : { durationSeconds: inspected[0].durationSeconds }),
+        encrypted: false
+      });
+      this.assertNotAborted(operation);
       const handle = await this.dependencies.download({
         videoUrl,
-        ...(selected.audioTrack?.uri ? { audio: { url: broker.expose(selected.audioTrack.uri), track: selected.audioTrack } } : {}),
-        ...(job.options.embedSubtitles && selected.subtitleTrack?.uri ? { subtitle: { url: broker.expose(selected.subtitleTrack.uri), track: selected.subtitleTrack } } : {})
+        ...(selected.audioTrack ? { audioTrack: selected.audioTrack } : {}),
+        ...(audioUrl && selected.audioTrack ? { audio: { url: audioUrl, track: selected.audioTrack } } : {}),
+        ...(subtitleUrl && selected.subtitleTrack ? { subtitle: { url: subtitleUrl, track: selected.subtitleTrack } } : {})
       }, descriptor, job.options, (progress) => this.onProgress(job.id, progress));
       operation.handle = handle;
       if (operation.aborted) {
@@ -288,33 +351,6 @@ export class OfflineManager {
   private assertNotAborted(operation: ActiveDownload): void {
     if (operation.aborted === "canceled") throw new KinoBridgeError("CANCELED", "Download was canceled");
     if (operation.aborted === "interrupted") throw new KinoBridgeError("INTERRUPTED", "Download was interrupted");
-  }
-
-  private async hydrateDescriptor(descriptor: StreamDescriptor, options: DownloadOptions): Promise<StreamDescriptor> {
-    const selected = selectPlaybackResources(descriptor, options);
-    const playlists = [
-      { kind: "video", url: selected.videoUrl },
-      ...(selected.audioTrack?.uri ? [{ kind: "audio", url: selected.audioTrack.uri }] : []),
-      ...(options.embedSubtitles && selected.subtitleTrack?.uri ? [{ kind: "subtitle", url: selected.subtitleTrack.uri }] : [])
-    ];
-    const probed = await Promise.all(playlists.map(async ({ kind, url }) => ({
-      kind,
-      descriptor: await this.dependencies.probe({
-        ...descriptor.candidate,
-        id: `${descriptor.candidate.id}:download-${kind}`,
-        requestId: `${descriptor.candidate.requestId}:download-${kind}`,
-        url
-      })
-    })));
-    if (descriptor.encrypted || probed.some((item) => item.descriptor.encrypted)) {
-      throw new KinoBridgeError("UNSUPPORTED_ENCRYPTION", "Encrypted or DRM-protected HLS cannot be downloaded");
-    }
-    const media = probed.find((item) => item.kind === "video")!.descriptor;
-    return StreamDescriptorSchema.parse({
-      ...descriptor,
-      ...(media.durationSeconds === undefined ? {} : { durationSeconds: media.durationSeconds }),
-      encrypted: false
-    });
   }
 
   private assertUsableDescriptor(descriptor: StreamDescriptor): void {

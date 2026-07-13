@@ -24,7 +24,7 @@ All messages use Chrome's four-byte little-endian length prefix. Messages larger
 - Processes are started by absolute allowlisted paths with argument arrays and `shell: false`.
 - Download filenames are normalized, contained within the selected directory, collision-suffixed, written to a random temporary file, validated for container/codec/geometry/profile where applicable plus expected tracks/languages/duration and start/end decoding, and installed without overwriting through an atomic hard link.
 - Video, preferred audio, and preferred subtitles are separate localhost-only FFmpeg inputs. Upstream signed URLs never appear in process arguments.
-- Selected video and external audio/subtitle playlists are probed for encryption before FFmpeg starts. Remux validation checks advertised source codec/geometry while preserving the source's otherwise-unadvertised profile; SBS VideoToolbox output pins and validates H.264 High or HEVC Main.
+- Selected video and external audio/subtitle playlists are inspected through the authenticated localhost broker for encryption before FFmpeg starts. Exact track IDs take precedence; two- and three-letter ISO language aliases are normalized and an unavailable request fails instead of silently selecting another language. Remux validation checks advertised source codec/geometry while preserving the source's otherwise-unadvertised profile; SBS VideoToolbox output pins and validates H.264 High or HEVC Main.
 - Queue/library state persists without descriptors or access context. Unfinished jobs become interrupted after helper restart and require a fresh authorized Kino capture.
 
 ## Local QA

@@ -52,7 +52,9 @@ export const VariantSchema = z.object({
   width: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),
   codecs: z.string().optional(),
-  frameRate: z.number().positive().optional()
+  frameRate: z.number().positive().optional(),
+  audioGroupId: z.string().max(512).optional(),
+  subtitleGroupId: z.string().max(512).optional()
 });
 
 export const MediaTrackSchema = z.object({
@@ -64,6 +66,7 @@ export const MediaTrackSchema = z.object({
   codec: z.string().optional(),
   groupId: z.string().optional(),
   default: z.boolean().default(false),
+  autoselect: z.boolean().default(false),
   forced: z.boolean().default(false)
 });
 
@@ -81,8 +84,10 @@ export const StreamDescriptorSchema = z.object({
 
 export const PlaybackOptionsSchema = z.object({
   player: PlayerSchema.default("mpv"),
-  audioLanguages: z.array(z.string()).default(["fr", "en"]),
-  subtitleLanguages: z.array(z.string()).default(["fr", "en"]),
+  audioTrackId: z.string().min(1).max(512).optional(),
+  subtitleTrackId: z.string().min(1).max(512).optional(),
+  audioLanguages: z.array(z.string()).default(["original", "en"]),
+  subtitleLanguages: z.array(z.string()).default(["en"]),
   subtitlesEnabled: z.boolean().default(true),
   forcedSubtitlesOnly: z.boolean().default(false),
   inputStereo: StereoFormatSchema.default("auto"),

@@ -66,6 +66,10 @@ function deferredValue<T>() {
   return { promise, resolve, reject };
 }
 
+async function inspectClear(_url: string, _kind: "video" | "audio" | "subtitle", _signal: AbortSignal) {
+  return { encrypted: false, durationSeconds: 10 };
+}
+
 describe("OfflineManager", () => {
   it("runs a persistent FIFO queue one job at a time and adds validated results to the library", async () => {
     const root = await mkdtemp(join(tmpdir(), "kinobridge-offline-manager-"));
@@ -81,6 +85,7 @@ describe("OfflineManager", () => {
         close: async () => undefined
       }),
       probe: async (candidate) => StreamDescriptorSchema.parse({ ...descriptor(), candidate, classification: "video", variants: [], tracks: [], durationSeconds: 10 }),
+      inspectBroker: inspectClear,
       download: async (_resources, _descriptor, _options, onProgress) => {
         onProgress({ phase: "downloading", percent: 10, seconds: 1 });
         return handles[starts++]!.handle;
@@ -136,9 +141,10 @@ describe("OfflineManager", () => {
         };
       },
       probe: async (candidate) => StreamDescriptorSchema.parse({ ...descriptor(), candidate, classification: "video", variants: [], tracks: [], durationSeconds: 10 }),
+      inspectBroker: inspectClear,
       download: async () => deferred.handle
     });
-    const options = DownloadOptionsSchema.parse({ outputDirectory: root, filename: "Movie", audioLanguages: ["en"] });
+    const options = DownloadOptionsSchema.parse({ outputDirectory: root, filename: "Movie", audioLanguages: ["en"], subtitleLanguages: ["fr"] });
     await manager.enqueue("live", descriptor(), options);
     await waitFor(() => manager.snapshot().queue[0]?.state === "running" && requestRefresh !== undefined);
 
@@ -171,15 +177,24 @@ describe("OfflineManager", () => {
     const store = new OfflineStore(join(root, "state.json"));
     const probeGate = deferredValue<void>();
     const emit = vi.fn();
-    const createBroker = vi.fn();
+    const createBroker = vi.fn(() => ({
+      start: async () => "http://127.0.0.1:49000/cap/video.m3u8",
+      expose: (url: string) => `http://127.0.0.1:49000/cap/${url.includes("audio") ? "audio" : "sub"}.m3u8`,
+      refresh: () => undefined,
+      close: async () => undefined
+    }));
     const download = vi.fn();
     let probeCalls = 0;
     const manager = new OfflineManager(store, emit, {
       createBroker,
-      probe: async (candidate) => {
+      probe: async (candidate) => StreamDescriptorSchema.parse({ ...descriptor(), candidate, classification: "video", variants: [], tracks: [], durationSeconds: 10 }),
+      inspectBroker: async (_url, _kind, signal) => {
         probeCalls += 1;
-        await probeGate.promise;
-        return StreamDescriptorSchema.parse({ ...descriptor(), candidate, classification: "video", variants: [], tracks: [], durationSeconds: 10 });
+        await Promise.race([
+          probeGate.promise,
+          new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => reject(new KinoBridgeError("CANCELED", "Download was canceled")), { once: true }))
+        ]);
+        return { encrypted: false, durationSeconds: 10 };
       },
       download
     });
@@ -196,7 +211,7 @@ describe("OfflineManager", () => {
     await waitFor(() => emit.mock.calls.length > emitsBeforeRelease);
     expect(manager.snapshot().queue[0]?.state).toBe("canceled");
     expect(manager.snapshot().library).toEqual([]);
-    expect(createBroker).not.toHaveBeenCalled();
+    expect(createBroker).toHaveBeenCalledOnce();
     expect(download).not.toHaveBeenCalled();
     expect(emit.mock.calls.some(([type]) => type === "completed")).toBe(false);
   });
@@ -221,6 +236,7 @@ describe("OfflineManager", () => {
         close
       }),
       probe: async (candidate) => StreamDescriptorSchema.parse({ ...descriptor(), candidate, classification: "video", variants: [], tracks: [], durationSeconds: 10 }),
+      inspectBroker: inspectClear,
       download
     });
     await manager.enqueue("cancel-broker", descriptor(), DownloadOptionsSchema.parse({
@@ -258,6 +274,7 @@ describe("OfflineManager", () => {
         close
       }),
       probe: async (candidate) => StreamDescriptorSchema.parse({ ...descriptor(), candidate, classification: "video", variants: [], tracks: [], durationSeconds: 10 }),
+      inspectBroker: inspectClear,
       download: async () => {
         downloadEntered = true;
         return handleGate.promise;
@@ -292,16 +309,10 @@ describe("OfflineManager", () => {
         refresh: () => undefined,
         close: async () => undefined
       }),
-      probe: async (candidate) => {
-        probed.push(candidate.url);
-        return StreamDescriptorSchema.parse({
-          ...descriptor(),
-          candidate,
-          classification: candidate.url.includes("audio") ? "audio" : candidate.url.includes("sub") ? "subtitle" : "video",
-          variants: [],
-          tracks: [],
-          encrypted: candidate.url.includes(encryptedKind)
-        });
+      probe: async (candidate) => StreamDescriptorSchema.parse({ ...descriptor(), candidate, classification: "video", variants: [], tracks: [], durationSeconds: 10 }),
+      inspectBroker: async (_url, kind) => {
+        probed.push(kind);
+        return { encrypted: kind === (encryptedKind === "sub" ? "subtitle" : encryptedKind) };
       },
       download: async () => {
         downloads += 1;
@@ -316,10 +327,39 @@ describe("OfflineManager", () => {
       embedSubtitles: true
     }));
     await waitFor(() => manager.snapshot().queue[0]?.state === "failed");
-    expect(probed.some((url) => url.includes("video"))).toBe(true);
-    expect(probed.some((url) => url.includes("audio"))).toBe(true);
-    expect(probed.some((url) => url.includes("sub"))).toBe(true);
+    expect(probed).toContain("video");
+    expect(probed).toContain("audio");
+    expect(probed).toContain("subtitle");
     expect(downloads).toBe(0);
     expect(manager.snapshot().queue[0]?.error).toMatch(/Encrypted or DRM-protected HLS/i);
+  });
+
+  it("reports the selected playlist kind instead of a generic internal error", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kinobridge-broker-inspection-error-"));
+    roots.push(root);
+    const store = new OfflineStore(join(root, "state.json"));
+    const manager = new OfflineManager(store, () => undefined, {
+      createBroker: () => ({
+        start: async () => "http://127.0.0.1:49000/cap/video.m3u8",
+        expose: (url: string) => `http://127.0.0.1:49000/cap/${url.includes("audio") ? "audio" : "sub"}.m3u8`,
+        refresh: () => undefined,
+        close: async () => undefined
+      }),
+      probe: async (candidate) => StreamDescriptorSchema.parse({ ...descriptor(), candidate, classification: "video", variants: [], tracks: [] }),
+      inspectBroker: async (_url, kind) => {
+        if (kind === "video") throw new KinoBridgeError("SELECTED_VIDEO_PROBE_FAILED", "Could not inspect the selected video playlist through the authenticated broker", true);
+        return { encrypted: false };
+      },
+      download: async () => deferredHandle().handle
+    });
+    await manager.enqueue("inspection-error", descriptor(), DownloadOptionsSchema.parse({
+      outputDirectory: root,
+      filename: "Inspection Error",
+      audioLanguages: ["en"],
+      subtitleLanguages: ["fr"]
+    }));
+    await waitFor(() => manager.snapshot().queue[0]?.state === "failed");
+    expect(manager.snapshot().queue[0]?.error).toMatch(/selected video playlist.*authenticated broker/i);
+    expect(manager.snapshot().queue[0]?.error).not.toMatch(/native helper could not/i);
   });
 });

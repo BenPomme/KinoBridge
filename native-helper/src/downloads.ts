@@ -31,6 +31,7 @@ export interface DownloadHandle {
 
 export interface DownloadResources {
   videoUrl: string;
+  audioTrack?: MediaTrack;
   audio?: { url: string; track: MediaTrack };
   subtitle?: { url: string; track: MediaTrack };
 }
@@ -116,7 +117,7 @@ export function buildFfmpegArguments(resources: DownloadResources, descriptor: S
   const videoCodec = options.codec === "copy" ? "copy" : options.codec === "h264-videotoolbox" ? "h264_videotoolbox" : "hevc_videotoolbox";
   const audioInput = resources.audio ? 1 : undefined;
   const subtitleInput = resources.subtitle ? (resources.audio ? 2 : 1) : undefined;
-  const audioLanguage = safeLanguage(resources.audio?.track.language);
+  const audioLanguage = safeLanguage((resources.audioTrack ?? resources.audio?.track)?.language);
   const subtitleLanguage = safeLanguage(resources.subtitle?.track.language);
   return [
     "-hide_banner",
@@ -191,7 +192,7 @@ export function buildValidationExpectations(
   const videoProfile = options.codec === "h264-videotoolbox"
     ? "high"
     : options.codec === "hevc-videotoolbox" ? "main" : undefined;
-  const audioLanguage = safeLanguage(resources.audio?.track.language);
+  const audioLanguage = safeLanguage((resources.audioTrack ?? resources.audio?.track)?.language);
   const subtitleLanguage = options.embedSubtitles ? safeLanguage(resources.subtitle?.track.language) : undefined;
   return {
     audio: Boolean(resources.audio || descriptor.tracks.some((track) => track.type === "audio") || descriptor.variants.some((variant) => /(?:mp4a|ac-3|ec-3|opus)/i.test(variant.codecs ?? ""))),

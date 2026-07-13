@@ -92,6 +92,7 @@ export class JobManager {
     try {
       const handle = await startDownload({
         videoUrl,
+        ...(selected.audioTrack ? { audioTrack: selected.audioTrack } : {}),
         ...(selected.audioTrack?.uri ? { audio: { url: broker.expose(selected.audioTrack.uri), track: selected.audioTrack } } : {}),
         ...(options.embedSubtitles && selected.subtitleTrack?.uri ? { subtitle: { url: broker.expose(selected.subtitleTrack.uri), track: selected.subtitleTrack } } : {})
       }, descriptor, options, (progress) => {
