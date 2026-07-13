@@ -157,6 +157,40 @@ describe("download planning", () => {
       height: 1080
     });
   });
+
+  it("uses the job-local dual-eye ASS track for SBS subtitles", () => {
+    const options = DownloadOptionsSchema.parse({
+      outputDirectory: "/tmp",
+      filename: "Fixture",
+      container: "mkv",
+      codec: "h264-videotoolbox",
+      inputStereo: "half-tb",
+      outputProfile: "xreal-sbs",
+      embedSubtitles: true
+    });
+    const temporary = "/tmp/.Fixture.part.mkv";
+    const prepared = `${temporary}.stereo.ass`;
+    const args = buildFfmpegArguments(localResources(), descriptor(), options, temporary, prepared);
+    const inputs = args.flatMap((arg, index) => arg === "-i" ? [args[index + 1]] : []);
+    expect(inputs).toEqual([
+      localResources().videoUrl,
+      localResources().audio!.url,
+      prepared
+    ]);
+    expect(args.slice(args.indexOf("-c:s"), args.indexOf("-c:s") + 2)).toEqual(["-c:s", "ass"]);
+  });
+
+  it("rejects arbitrary prepared subtitle paths", () => {
+    const options = DownloadOptionsSchema.parse({
+      outputDirectory: "/tmp",
+      filename: "Fixture",
+      codec: "h264-videotoolbox",
+      inputStereo: "half-tb",
+      outputProfile: "xreal-sbs"
+    });
+    expect(() => buildFfmpegArguments(localResources(), descriptor(), options, "/tmp/output.mkv", "/tmp/other.ass"))
+      .toThrow(/outside this download job/i);
+  });
 });
 
 describe("completed download validation", () => {

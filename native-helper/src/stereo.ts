@@ -14,9 +14,11 @@ function eyeChain(label: string, cropY: string, options: PlaybackOptions, horizo
   const scaledHeight = Math.max(1, Math.round(options.outputHeight * zoom * aspect));
   const horizontal = options.horizontalAlignment * horizontalSign;
   const vertical = options.verticalAlignment * verticalSign;
+  const horizontalTravel = Math.abs(options.horizontalAlignment) * 2;
+  const verticalTravel = Math.abs(options.verticalAlignment) * 2;
   const x = `max(0\\,min(iw-ow\\,(iw-ow)/2+${horizontal}))`;
   const y = `max(0\\,min(ih-oh\\,(ih-oh)/2+${vertical}))`;
-  return `crop=iw:ih/2:0:${cropY},scale=${scaledWidth}:${scaledHeight},pad=max(iw\\,${eyeWidth}):max(ih\\,${options.outputHeight}):(ow-iw)/2:(oh-ih)/2:black,crop=${eyeWidth}:${options.outputHeight}:${x}:${y}[${label}]`;
+  return `crop=iw:ih/2:0:${cropY},scale=${scaledWidth}:${scaledHeight},pad=max(iw\\,${eyeWidth})+${horizontalTravel}:max(ih\\,${options.outputHeight})+${verticalTravel}:(ow-iw)/2:(oh-ih)/2:black,crop=${eyeWidth}:${options.outputHeight}:${x}:${y}[${label}]`;
 }
 
 export function buildTopBottomToSbsFilter(options: PlaybackOptions): string | undefined {

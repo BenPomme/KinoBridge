@@ -249,7 +249,7 @@ function applyXrealDefaults(): void {
   byId<HTMLInputElement>("output-height").value = "1080";
   byId<HTMLInputElement>("aspect").value = "1";
   byId<HTMLInputElement>("h-align").value = "0";
-  byId<HTMLInputElement>("v-align").value = "0";
+  byId<HTMLInputElement>("v-align").value = "-78";
   byId<HTMLInputElement>("zoom").value = "1";
   byId<HTMLSelectElement>("codec").value = "h264-videotoolbox";
 }

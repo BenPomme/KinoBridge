@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { access, link, rm } from "node:fs/promises";
+import { access, link, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
@@ -9,6 +9,7 @@ import { requireDependency } from "./diagnostics.js";
 import { KinoBridgeError } from "./errors.js";
 import { spawnSafe } from "./process.js";
 import { buildTopBottomToSbsFilter } from "./stereo.js";
+import { buildStereoAss } from "./stereo-subtitles.js";
 
 export interface DownloadProgress {
   phase: "downloading" | "validating";
@@ -108,15 +109,28 @@ function assertLocalBrokerUrl(raw: string): void {
   }
 }
 
-export function buildFfmpegArguments(resources: DownloadResources, descriptor: StreamDescriptor, options: DownloadOptions, temporary: string): string[] {
+export function buildFfmpegArguments(
+  resources: DownloadResources,
+  descriptor: StreamDescriptor,
+  options: DownloadOptions,
+  temporary: string,
+  preparedStereoSubtitle?: string
+): string[] {
   assertLocalBrokerUrl(resources.videoUrl);
   if (resources.audio) assertLocalBrokerUrl(resources.audio.url);
-  if (resources.subtitle) assertLocalBrokerUrl(resources.subtitle.url);
+  if (resources.subtitle && !preparedStereoSubtitle) assertLocalBrokerUrl(resources.subtitle.url);
   const filter = buildTopBottomToSbsFilter(options);
   if (filter && options.codec === "copy") throw new KinoBridgeError("CODEC_REQUIRED", "SBS conversion requires H.264 or HEVC transcoding");
+  if (preparedStereoSubtitle && preparedStereoSubtitle !== `${temporary}.stereo.ass`) {
+    throw new KinoBridgeError("UNSAFE_MEDIA_INPUT", "Prepared subtitle path is outside this download job");
+  }
+  if (filter && options.embedSubtitles && resources.subtitle && options.container !== "mkv") {
+    throw new KinoBridgeError("STEREO_SUBTITLE_CONTAINER", "Dual-eye subtitles require MKV output");
+  }
   const videoCodec = options.codec === "copy" ? "copy" : options.codec === "h264-videotoolbox" ? "h264_videotoolbox" : "hevc_videotoolbox";
   const audioInput = resources.audio ? 1 : undefined;
   const subtitleInput = resources.subtitle ? (resources.audio ? 2 : 1) : undefined;
+  const subtitleUrl = preparedStereoSubtitle ?? resources.subtitle?.url;
   const audioLanguage = safeLanguage((resources.audioTrack ?? resources.audio?.track)?.language);
   const subtitleLanguage = safeLanguage(resources.subtitle?.track.language);
   return [
@@ -125,7 +139,7 @@ export function buildFfmpegArguments(resources: DownloadResources, descriptor: S
     "-y",
     "-i", resources.videoUrl,
     ...(resources.audio ? ["-i", resources.audio.url] : []),
-    ...(options.embedSubtitles && resources.subtitle ? ["-i", resources.subtitle.url] : []),
+    ...(options.embedSubtitles && subtitleUrl ? ["-i", subtitleUrl] : []),
     // A missing video stream must fail the job; audio is optional only when the
     // descriptor did not offer a separately selectable audio rendition.
     "-map", "0:v:0",
@@ -137,7 +151,7 @@ export function buildFfmpegArguments(resources: DownloadResources, descriptor: S
     ...(options.codec === "h264-videotoolbox" ? ["-profile:v", "high"] : []),
     ...(options.codec === "hevc-videotoolbox" ? ["-profile:v", "main"] : []),
     "-c:a", "copy",
-    ...(options.embedSubtitles ? ["-c:s", options.container === "mkv" ? "copy" : "mov_text"] : []),
+    ...(options.embedSubtitles ? ["-c:s", preparedStereoSubtitle ? "ass" : options.container === "mkv" ? "copy" : "mov_text"] : []),
     ...(audioLanguage ? ["-metadata:s:a:0", `language=${audioLanguage}`] : []),
     ...(options.embedSubtitles && subtitleLanguage ? ["-metadata:s:s:0", `language=${subtitleLanguage}`] : []),
     "-progress", "pipe:1",
@@ -303,6 +317,49 @@ async function waitForProcess(child: ChildProcessWithoutNullStreams, timeoutMs =
   });
 }
 
+async function prepareStereoSubtitle(
+  ffmpeg: string,
+  resources: DownloadResources,
+  options: DownloadOptions,
+  temporary: string
+): Promise<{ path?: string; cleanup: string[] }> {
+  const filter = buildTopBottomToSbsFilter(options);
+  if (!filter || !options.embedSubtitles || !resources.subtitle) return { cleanup: [] };
+  if (options.container !== "mkv") {
+    throw new KinoBridgeError("STEREO_SUBTITLE_CONTAINER", "Dual-eye subtitles require MKV output");
+  }
+  assertLocalBrokerUrl(resources.subtitle.url);
+  const sourcePath = `${temporary}.source.ass`;
+  const stereoPath = `${temporary}.stereo.ass`;
+  const cleanup = [sourcePath, stereoPath];
+  const converter = spawnSafe(ffmpeg, [
+    "-v", "error",
+    "-nostdin",
+    "-y",
+    "-i", resources.subtitle.url,
+    "-map", "0:s:0",
+    "-c:s", "ass",
+    sourcePath
+  ]);
+  converter.stdout.resume();
+  converter.stderr.resume();
+  try {
+    const code = await waitForProcess(converter, 60_000);
+    if (code !== 0) {
+      throw new KinoBridgeError("SUBTITLE_PREPARATION_FAILED", "Could not prepare the selected subtitle track");
+    }
+    const source = await readFile(sourcePath, { encoding: "utf8" });
+    const stereo = buildStereoAss(source, options.outputWidth, options.outputHeight);
+    await writeFile(stereoPath, stereo, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    await rm(sourcePath, { force: true });
+    return { path: stereoPath, cleanup };
+  } catch (error) {
+    await Promise.all(cleanup.map((path) => rm(path, { force: true })));
+    if (error instanceof KinoBridgeError) throw error;
+    throw new KinoBridgeError("SUBTITLE_PREPARATION_FAILED", "Could not prepare the selected subtitle track");
+  }
+}
+
 async function validateOutput(path: string, expected: ValidationExpectations): Promise<DownloadResult> {
   const ffprobe = await requireDependency("ffprobe");
   const child = spawnSafe(ffprobe, [
@@ -350,7 +407,14 @@ export async function startDownload(
   const ffmpeg = await requireDependency("ffmpeg");
   const paths = await resolveOutputPaths(options);
   await assertDestinationAvailable(paths.final);
-  const child = spawnSafe(ffmpeg, buildFfmpegArguments(resources, descriptor, options, paths.temporary));
+  const preparedSubtitle = await prepareStereoSubtitle(ffmpeg, resources, options, paths.temporary);
+  let child: ChildProcessWithoutNullStreams;
+  try {
+    child = spawnSafe(ffmpeg, buildFfmpegArguments(resources, descriptor, options, paths.temporary, preparedSubtitle.path));
+  } catch (error) {
+    await Promise.all(preparedSubtitle.cleanup.map((path) => rm(path, { force: true })));
+    throw error;
+  }
   let progressBuffer = "";
   let canceled = false;
   child.stdout.on("data", (chunk: Buffer) => {
@@ -383,9 +447,11 @@ export async function startDownload(
         throw error;
       }
       await rm(paths.temporary, { force: true });
+      await Promise.all(preparedSubtitle.cleanup.map((path) => rm(path, { force: true })));
       return { ...validated, outputPath: paths.final };
     } catch (error) {
       await rm(paths.temporary, { force: true });
+      await Promise.all(preparedSubtitle.cleanup.map((path) => rm(path, { force: true })));
       throw error;
     }
   })();

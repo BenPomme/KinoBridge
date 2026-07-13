@@ -6,7 +6,7 @@
 pnpm qa
 ```
 
-Tests cover shared validation, HLS classification, Native Messaging framing, safe proxy routing and refresh lineage, explicit video/audio/subtitle download inputs, duration/track/decode validation, persistent queue restart behavior, local library actions, filter construction, player arguments, filenames, job cancellation, and redaction. A generated four-second HLS integration fixture proves separate video, audio, and WebVTT are remuxed and validated. Fixtures contain no signed Kino URLs.
+Tests cover shared validation, HLS classification, Native Messaging framing, safe proxy routing and refresh lineage, explicit video/audio/subtitle download inputs, duration/track/decode validation, persistent queue restart behavior, local library actions, filter construction, player arguments, filenames, job cancellation, and redaction. Generated HLS integration fixtures prove separate video/audio/WebVTT remuxing and a VideoToolbox SBS transcode with a dual-eye ASS subtitle. A pixel-level FFmpeg fixture verifies that calibrated eye images occupy matching vertical rows. Fixtures contain no signed Kino URLs.
 
 ## Synthetic stereo
 

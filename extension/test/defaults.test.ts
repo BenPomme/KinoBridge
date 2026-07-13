@@ -12,7 +12,7 @@ describe("automatic movie defaults", () => {
       outputHeight: 1080,
       aspectCorrection: 1,
       horizontalAlignment: 0,
-      verticalAlignment: 0,
+      verticalAlignment: -78,
       zoom: 1,
       codec: "h264-videotoolbox"
     });

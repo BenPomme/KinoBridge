@@ -12,6 +12,18 @@ describe("Top/Bottom to SBS filter", () => {
     expect(filter).toContain("[left][right]hstack=inputs=2");
   });
 
+  it("gives alignment controls travel at zoom 1 and shifts the eyes symmetrically", () => {
+    const options = PlaybackOptionsSchema.parse({
+      inputStereo: "half-tb",
+      outputProfile: "xreal-sbs",
+      verticalAlignment: -78
+    });
+    const filter = buildTopBottomToSbsFilter(options)!;
+    expect(filter).toContain("max(ih\\,1080)+156");
+    expect(filter).toContain("(ih-oh)/2+-78");
+    expect(filter).toContain("(ih-oh)/2+78");
+  });
+
   it("swaps eye labels for right-first input", () => {
     const options = PlaybackOptionsSchema.parse({ inputStereo: "full-tb", outputProfile: "xreal-sbs", eyeOrder: "right-first" });
     const filter = buildTopBottomToSbsFilter(options)!;
