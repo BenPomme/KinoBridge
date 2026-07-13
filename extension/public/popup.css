@@ -5,6 +5,7 @@ main { padding: 18px; }
 header { margin-bottom: 14px; }
 .eyebrow { margin: 0 0 3px; color: #7dd3fc; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 h1 { margin: 0; font-size: 18px; line-height: 1.25; }
+h2 { margin: 0; font-size: 15px; }
 .status { min-height: 20px; margin: 8px 0 0; color: #bac7dc; }
 .permission { width: 100%; margin-top: 9px; }
 .permission-note { margin: 5px 0 0; color: #91a0ba; font-size: 11px; }
@@ -27,3 +28,14 @@ button.secondary { border-color: #476080; color: #e5edfa; background: #1a2942; }
 button.danger { border-color: #f87171; color: #fee2e2; background: #4c1d24; }
 button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity: .55; }
 :focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
+.offline { margin-top: 16px; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cards { display: grid; gap: 8px; margin-top: 8px; }
+.card { padding: 10px; border: 1px solid #263451; border-radius: 9px; background: #111a30; }
+.card-title { margin: 0; color: #f8fafc; font-weight: 700; overflow-wrap: anywhere; }
+.card-meta, .empty { margin: 4px 0 0; color: #91a0ba; font-size: 11px; overflow-wrap: anywhere; }
+.card-error { margin: 4px 0 0; color: #fca5a5; font-size: 11px; }
+.card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+button.compact { width: auto; padding: 5px 8px; font-size: 11px; }
+.progress { width: 100%; height: 5px; margin-top: 7px; overflow: hidden; border-radius: 999px; background: #263451; }
+.progress > span { display: block; height: 100%; background: #38bdf8; }

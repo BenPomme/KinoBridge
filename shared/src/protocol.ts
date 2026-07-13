@@ -106,6 +106,45 @@ export const DownloadOptionsSchema = z.object({
   embedSubtitles: z.boolean().default(true)
 });
 
+export const OfflineJobStateSchema = z.enum(["queued", "running", "interrupted", "completed", "failed", "canceled"]);
+export const OfflineSourceSchema = z.object({
+  title: z.string().min(1).max(512),
+  pageUrl: z.string().url()
+}).strict();
+export const OfflineQueueItemSchema = z.object({
+  id: z.string().min(1).max(128),
+  source: OfflineSourceSchema,
+  options: DownloadOptionsSchema,
+  quality: z.string().regex(/^(?:auto|\d{3,4}p?)$/).default("auto"),
+  state: OfflineJobStateSchema,
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+  progress: z.object({ percent: z.number().min(0).max(100).optional(), seconds: z.number().nonnegative().optional() }).strict().optional(),
+  error: z.string().max(500).optional(),
+  outputPath: z.string().min(1).optional()
+}).strict();
+export const OfflineTrackSchema = z.object({
+  type: z.enum(["video", "audio", "subtitle"]),
+  codec: z.string().max(128).optional(),
+  language: z.string().max(64).optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional()
+}).strict();
+export const OfflineLibraryEntrySchema = z.object({
+  id: z.string().min(1).max(128),
+  title: z.string().min(1).max(512),
+  sourcePageUrl: z.string().url(),
+  outputPath: z.string().min(1),
+  sizeBytes: z.number().int().nonnegative(),
+  durationSeconds: z.number().nonnegative().optional(),
+  tracks: z.array(OfflineTrackSchema).max(128),
+  createdAt: z.number().int().nonnegative()
+}).strict();
+export const OfflineSnapshotSchema = z.object({
+  queue: z.array(OfflineQueueItemSchema).max(1_000),
+  library: z.array(OfflineLibraryEntrySchema).max(10_000)
+}).strict();
+
 export const CommandTypeSchema = z.enum([
   "hello",
   "probe",
@@ -113,7 +152,12 @@ export const CommandTypeSchema = z.enum([
   "download",
   "cancel",
   "status",
-  "refreshResponse"
+  "refreshResponse",
+  "offlineRetry",
+  "offlineRemove",
+  "libraryPlay",
+  "libraryReveal",
+  "libraryDelete"
 ]);
 export const EventTypeSchema = z.enum([
   "ready",
@@ -121,7 +165,8 @@ export const EventTypeSchema = z.enum([
   "progress",
   "completed",
   "failed",
-  "refreshRequired"
+  "refreshRequired",
+  "offlineState"
 ]);
 
 export const EnvelopeSchema = z.object({
@@ -141,6 +186,12 @@ export type MediaTrack = z.infer<typeof MediaTrackSchema>;
 export type StreamDescriptor = z.infer<typeof StreamDescriptorSchema>;
 export type PlaybackOptions = z.infer<typeof PlaybackOptionsSchema>;
 export type DownloadOptions = z.infer<typeof DownloadOptionsSchema>;
+export type OfflineJobState = z.infer<typeof OfflineJobStateSchema>;
+export type OfflineSource = z.infer<typeof OfflineSourceSchema>;
+export type OfflineQueueItem = z.infer<typeof OfflineQueueItemSchema>;
+export type OfflineTrack = z.infer<typeof OfflineTrackSchema>;
+export type OfflineLibraryEntry = z.infer<typeof OfflineLibraryEntrySchema>;
+export type OfflineSnapshot = z.infer<typeof OfflineSnapshotSchema>;
 export type Envelope = z.infer<typeof EnvelopeSchema>;
 
 export function makeEnvelope(type: Envelope["type"], payload: unknown, id = crypto.randomUUID()): Envelope {

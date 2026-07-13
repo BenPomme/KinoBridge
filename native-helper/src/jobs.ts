@@ -36,7 +36,15 @@ export class JobManager {
     this.assertNew(id);
     const broker = new AccessBroker(
       descriptor.candidate,
-      () => this.emit("refreshRequired", { jobId: id, candidateId: descriptor.candidate.id }),
+      () => this.emit("refreshRequired", {
+        jobId: id,
+        candidateId: descriptor.candidate.id,
+        tabId: descriptor.candidate.tabId,
+        navigationId: descriptor.candidate.navigationId,
+        pageUrl: descriptor.candidate.pageUrl,
+        pageTitle: descriptor.candidate.pageTitle,
+        rootRole: descriptor.classification
+      }),
       this.playlistUrls(descriptor)
     );
     const selected = selectPlaybackResources(descriptor, options);
@@ -68,12 +76,25 @@ export class JobManager {
     this.assertNew(id);
     const broker = new AccessBroker(
       descriptor.candidate,
-      () => this.emit("refreshRequired", { jobId: id, candidateId: descriptor.candidate.id }),
+      () => this.emit("refreshRequired", {
+        jobId: id,
+        candidateId: descriptor.candidate.id,
+        tabId: descriptor.candidate.tabId,
+        navigationId: descriptor.candidate.navigationId,
+        pageUrl: descriptor.candidate.pageUrl,
+        pageTitle: descriptor.candidate.pageTitle,
+        rootRole: descriptor.classification
+      }),
       this.playlistUrls(descriptor)
     );
-    const localUrl = await broker.start(descriptor.masterUrl ?? descriptor.candidate.url);
+    const selected = selectPlaybackResources(descriptor, options);
+    const videoUrl = await broker.start(selected.videoUrl);
     try {
-      const handle = await startDownload(localUrl, descriptor, options, (progress) => {
+      const handle = await startDownload({
+        videoUrl,
+        ...(selected.audioTrack?.uri ? { audio: { url: broker.expose(selected.audioTrack.uri), track: selected.audioTrack } } : {}),
+        ...(options.embedSubtitles && selected.subtitleTrack?.uri ? { subtitle: { url: broker.expose(selected.subtitleTrack.uri), track: selected.subtitleTrack } } : {})
+      }, descriptor, options, (progress) => {
         const record = this.jobs.get(id);
         if (record) {
           record.snapshot.progress = progress;

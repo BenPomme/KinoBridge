@@ -6,7 +6,7 @@
 pnpm qa
 ```
 
-Tests cover shared validation, HLS classification, Native Messaging framing, safe proxy routing, filter construction, player arguments, filenames, job cancellation, and redaction. Fixtures contain no signed Kino URLs.
+Tests cover shared validation, HLS classification, Native Messaging framing, safe proxy routing and refresh lineage, explicit video/audio/subtitle download inputs, duration/track/decode validation, persistent queue restart behavior, local library actions, filter construction, player arguments, filenames, job cancellation, and redaction. A generated four-second HLS integration fixture proves separate video, audio, and WebVTT are remuxed and validated. Fixtures contain no signed Kino URLs.
 
 ## Synthetic stereo
 
@@ -24,5 +24,8 @@ Use the generated red/blue Top/Bottom file to verify left/right ordering before 
 4. Play through VLC to prove broker authentication, then through mpv to verify tracks.
 5. Expire or refresh the page and confirm a recoverable refresh error.
 6. Test Top/Bottom-to-SBS on the Mac display, then connect XREAL Air 2 and manually enable SBS mode.
+7. Download a short authorized, non-encrypted movie completely. Confirm the expected audio and subtitle languages in the Offline library.
+8. Disconnect networking, use **Play** from the Offline library, seek near the end, and verify audio/subtitles.
+9. Reconnect, start a second download, close/reopen Chrome, verify the job becomes interrupted, then capture the same title and use **Retry from current Kino tab**.
 
 Never capture passwords, cookies, raw signed URLs, or private browser data in screenshots or test artifacts.

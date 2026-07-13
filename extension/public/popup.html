@@ -70,6 +70,19 @@
           <button id="cancel" type="button" class="danger" disabled>Cancel active job</button>
         </div>
       </form>
+
+      <section class="offline" aria-labelledby="downloads-heading">
+        <div class="section-heading">
+          <h2 id="downloads-heading">Offline downloads</h2>
+          <button id="refresh-offline" type="button" class="secondary compact">Refresh</button>
+        </div>
+        <div id="offline-queue" class="cards"><p class="empty">No downloads yet.</p></div>
+      </section>
+
+      <section class="offline" aria-labelledby="library-heading">
+        <h2 id="library-heading">Offline library</h2>
+        <div id="offline-library" class="cards"><p class="empty">Downloaded movies will appear here.</p></div>
+      </section>
     </main>
     <script type="module" src="popup.js"></script>
   </body>

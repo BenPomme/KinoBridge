@@ -2,6 +2,7 @@ import {
   AccessContextSchema,
   DownloadOptionsSchema,
   EnvelopeSchema,
+  OfflineSnapshotSchema,
   PlaybackOptionsSchema,
   StreamCandidateSchema,
   StreamDescriptorSchema,
@@ -9,10 +10,12 @@ import {
   minimalAccessContext,
   type AccessContext,
   type Envelope,
+  type OfflineSnapshot,
   type StreamDescriptor
 } from "@kinobridge/shared";
 import { candidatePreview, classifyPlaylistUrl, isAllowedManualOverride, isHlsPlaylistUrl, isKinoPageUrl, rankClassification } from "./candidates.js";
 import { isPopupRequest, type PopupRequest, type PopupResponse, type PopupState } from "./messages.js";
+import { isFreshRefreshDescriptor, parseRefreshBinding, type RefreshRequirement } from "./refresh.js";
 import {
   ensureNavigation,
   getCandidates,
@@ -27,10 +30,13 @@ import {
 const NATIVE_HOST = "com.kinobridge.helper";
 const STATUS_KEY = "native-status";
 const ACTIVE_JOB_KEY = "active-job-id";
+const OFFLINE_STATE_KEY = "offline-state";
 const MAX_STATUS_LENGTH = 300;
 let nativePort: chrome.runtime.Port | undefined;
 let reconnectDelayMs = 1_000;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+const pendingNativeRequests = new Map<string, { resolve: (payload: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+const pendingRefreshJobs = new Map<string, RefreshRequirement & { timer: ReturnType<typeof setTimeout> }>();
 
 function safeError(error: unknown): string {
   return error instanceof Error ? redactText(error.message) : "Unexpected extension error";
@@ -102,6 +108,38 @@ function postNative(envelope: Envelope): void {
   nativePort.postMessage(envelope);
 }
 
+function requestNative(type: Envelope["type"], payload: unknown, timeoutMs = 10_000): Promise<unknown> {
+  const envelope = makeEnvelope(type, payload);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingNativeRequests.delete(envelope.id);
+      reject(new Error("Native helper did not respond in time"));
+    }, timeoutMs);
+    pendingNativeRequests.set(envelope.id, { resolve, reject, timer });
+    try {
+      postNative(envelope);
+    } catch (error) {
+      clearTimeout(timer);
+      pendingNativeRequests.delete(envelope.id);
+      reject(error instanceof Error ? error : new Error("Native helper request failed"));
+    }
+  });
+}
+
+async function setOfflineState(raw: unknown): Promise<OfflineSnapshot | undefined> {
+  const parsed = OfflineSnapshotSchema.safeParse(raw);
+  if (!parsed.success) return undefined;
+  await chrome.storage.local.set({ [OFFLINE_STATE_KEY]: parsed.data });
+  void chrome.runtime.sendMessage({ type: "offlineChanged" }).catch(() => undefined);
+  return parsed.data;
+}
+
+async function getOfflineState(): Promise<OfflineSnapshot> {
+  const raw = (await chrome.storage.local.get(OFFLINE_STATE_KEY))[OFFLINE_STATE_KEY];
+  const parsed = OfflineSnapshotSchema.safeParse(raw);
+  return parsed.success ? parsed.data : { queue: [], library: [] };
+}
+
 async function handleNativeMessage(message: unknown): Promise<void> {
   const parsed = EnvelopeSchema.safeParse(message);
   if (!parsed.success) {
@@ -109,10 +147,22 @@ async function handleNativeMessage(message: unknown): Promise<void> {
     return;
   }
   const envelope = parsed.data;
+  const pending = pendingNativeRequests.get(envelope.id);
+  if (pending && (envelope.type === "offlineState" || envelope.type === "failed")) {
+    clearTimeout(pending.timer);
+    pendingNativeRequests.delete(envelope.id);
+    if (envelope.type === "failed") {
+      const payload = envelope.payload as { error?: { message?: unknown } };
+      pending.reject(new Error(typeof payload.error?.message === "string" ? payload.error.message : "Native helper request failed"));
+    } else pending.resolve(envelope.payload);
+  }
   switch (envelope.type) {
-    case "ready":
+    case "ready": {
+      const payload = envelope.payload as { offline?: unknown };
+      if (payload.offline) await setOfflineState(payload.offline);
       await setStatus("Native helper ready");
       break;
+    }
     case "probeResult": {
       const payload = envelope.payload as { descriptor?: unknown };
       const descriptor = StreamDescriptorSchema.safeParse(payload?.descriptor);
@@ -121,26 +171,35 @@ async function handleNativeMessage(message: unknown): Promise<void> {
         break;
       }
       await setDescriptor(descriptor.data);
+      await fulfillPendingRefresh(descriptor.data);
       await setStatus("Stream inspected and ready");
       break;
     }
     case "progress": {
-      const payload = envelope.payload as { percent?: unknown; job?: { progress?: { percent?: unknown } } };
+      const payload = envelope.payload as { percent?: unknown; job?: { progress?: { percent?: unknown } }; offline?: unknown };
+      if (payload.offline) await setOfflineState(payload.offline);
       const rawPercent = typeof payload?.percent === "number" ? payload.percent : payload?.job?.progress?.percent;
       const percent = typeof rawPercent === "number" ? Math.max(0, Math.min(100, rawPercent)) : undefined;
       await setStatus(percent === undefined ? "Media job in progress" : `Media job ${Math.round(percent)}%`);
       break;
     }
-    case "completed":
+    case "completed": {
+      const payload = envelope.payload as { offline?: unknown };
+      if (payload.offline) await setOfflineState(payload.offline);
       await chrome.storage.session.remove(ACTIVE_JOB_KEY);
       await setStatus("Media job completed");
       break;
+    }
     case "failed": {
       await chrome.storage.session.remove(ACTIVE_JOB_KEY);
-      const payload = envelope.payload as { error?: { message?: unknown } };
+      const payload = envelope.payload as { error?: { message?: unknown }; offline?: unknown };
+      if (payload.offline) await setOfflineState(payload.offline);
       await setStatus(typeof payload?.error?.message === "string" ? `Media job failed: ${payload.error.message}` : "Media job failed");
       break;
     }
+    case "offlineState":
+      await setOfflineState(envelope.payload);
+      break;
     case "refreshRequired":
       await refreshNativeCandidate(envelope.payload);
       break;
@@ -150,23 +209,58 @@ async function handleNativeMessage(message: unknown): Promise<void> {
 }
 
 async function refreshNativeCandidate(rawPayload: unknown): Promise<void> {
-  const payload = rawPayload as { jobId?: unknown };
-  if (typeof payload?.jobId !== "string") {
-    await setStatus("Native helper sent an invalid refresh request");
+  const payload = rawPayload as { jobId?: unknown; candidateId?: unknown };
+  const binding = parseRefreshBinding(rawPayload);
+  if (typeof payload?.jobId !== "string" || typeof payload.candidateId !== "string" || !binding) {
+    await setStatus("Native helper sent an invalid or unbound refresh request");
     return;
   }
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  const tab = tabs[0];
-  if (tab?.id === undefined || !isKinoPageUrl(tab.url)) {
-    await setStatus("Refresh requested: return to the active Kino.pub tab and start playback");
+  let tab: chrome.tabs.Tab;
+  try {
+    tab = await chrome.tabs.get(binding.tabId);
+  } catch {
+    await setStatus("Refresh requested: reopen the original Kino title tab and start playback");
     return;
   }
-  const candidate = (await getCandidates(tab.id))[0];
-  if (!candidate) {
-    await setStatus("Refresh requested: start playback in Kino.pub to obtain a new URL");
+  const navigation = await getNavigation(binding.tabId);
+  if (!isKinoPageUrl(tab.url) || !sameKinoPage(binding.pageUrl, tab.url as string) || navigation?.id !== binding.navigationId) {
+    await setStatus("Refresh requested: return to the original Kino title tab and start playback without navigating away");
     return;
   }
-  postNative(makeEnvelope("refreshResponse", { jobId: payload.jobId, candidate }));
+  const candidates = await getCandidates(binding.tabId);
+  const expiredCandidateId = payload.candidateId;
+  const expired = candidates.find((candidate) => candidate.id === expiredCandidateId);
+  const requirement: RefreshRequirement = {
+    ...binding,
+    expiredCandidateId,
+    minimumObservedAt: expired?.observedAt === undefined ? Date.now() - 1_000 : expired.observedAt + 1
+  };
+  for (const candidate of candidates) {
+    if (candidate.id === expiredCandidateId || (expired && candidate.observedAt <= expired.observedAt)) continue;
+    const descriptor = await getDescriptor(binding.tabId, candidate.id);
+    if (!descriptor || !isFreshRefreshDescriptor(descriptor, requirement)) continue;
+    postNative(makeEnvelope("refreshResponse", { jobId: payload.jobId, candidate }));
+    await setStatus("Offline stream access refreshed");
+    return;
+  }
+  const previous = pendingRefreshJobs.get(payload.jobId);
+  if (previous) clearTimeout(previous.timer);
+  // Keep the browser-side candidate waiter alive for the broker's 60-second
+  // refresh window, while leaving a small margin for message delivery.
+  const timer = setTimeout(() => pendingRefreshJobs.delete(payload.jobId as string), 59_000);
+  pendingRefreshJobs.set(payload.jobId, { ...requirement, timer });
+  await setStatus("Stream access expired: press Play in the original Kino tab for a few seconds to refresh the download");
+}
+
+async function fulfillPendingRefresh(descriptor: StreamDescriptor): Promise<void> {
+  for (const [jobId, pending] of pendingRefreshJobs) {
+    if (!isFreshRefreshDescriptor(descriptor, pending)) continue;
+    const candidate = descriptor.candidate;
+    clearTimeout(pending.timer);
+    pendingRefreshJobs.delete(jobId);
+    postNative(makeEnvelope("refreshResponse", { jobId, candidate }));
+    await setStatus("Offline stream access refreshed; download retrying…");
+  }
 }
 
 function requestAccess(details: chrome.webRequest.OnBeforeSendHeadersDetails): AccessContext {
@@ -256,7 +350,8 @@ async function popupState(): Promise<PopupState> {
       candidates: [],
       nativeStatus: await getStatus(),
       cdnAccessGranted: await chrome.permissions.contains({ origins: ["https://*/*"] }),
-      ...(typeof activeJobId === "string" ? { activeJobId } : {})
+      ...(typeof activeJobId === "string" ? { activeJobId } : {}),
+      offline: await getOfflineState()
     };
   }
   const [candidates, navigation] = await Promise.all([getCandidates(tab.id), getNavigation(tab.id)]);
@@ -283,8 +378,37 @@ async function popupState(): Promise<PopupState> {
     candidates: candidateViews,
     nativeStatus: await getStatus(),
     cdnAccessGranted: await chrome.permissions.contains({ origins: ["https://*/*"] }),
-    ...(typeof activeJobId === "string" ? { activeJobId } : {})
+    ...(typeof activeJobId === "string" ? { activeJobId } : {}),
+    offline: await getOfflineState()
   };
+}
+
+function sameKinoPage(left: string, right: string): boolean {
+  const a = new URL(left);
+  const b = new URL(right);
+  return a.origin === b.origin && a.pathname.replace(/\/$/, "") === b.pathname.replace(/\/$/, "");
+}
+
+async function retryOffline(jobId: string): Promise<void> {
+  const offline = await getOfflineState();
+  const job = offline.queue.find((item) => item.id === jobId);
+  if (!job) throw new Error("Offline job was not found");
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = tabs[0];
+  if (tab?.id === undefined || !isKinoPageUrl(tab.url) || !sameKinoPage(job.source.pageUrl, tab.url as string)) {
+    throw new Error("Open this movie's Kino page, reload it, and play for a few seconds before retrying");
+  }
+  const candidates = await getCandidates(tab.id);
+  for (const current of candidates) {
+    const descriptor = await getDescriptor(tab.id, current.id);
+    if (!descriptor || (descriptor.classification !== "master" && descriptor.classification !== "video")) continue;
+    const refreshed = selectQuality(descriptor, job.quality);
+    const response = await requestNative("offlineRetry", { jobId, descriptor: refreshed });
+    const snapshot = await setOfflineState(response);
+    if (!snapshot) throw new Error("Native helper returned invalid offline state");
+    return;
+  }
+  throw new Error("No inspected video playlist is ready; play the Kino video for a few seconds and retry");
 }
 
 async function addOverride(raw: string): Promise<PopupState> {
@@ -373,8 +497,28 @@ async function handlePopupRequest(request: PopupRequest): Promise<unknown> {
       return { jobId: await runCommand(request) };
     case "cancel":
       postNative(makeEnvelope("cancel", { jobId: request.jobId }));
+      await chrome.storage.session.remove(ACTIVE_JOB_KEY);
       await setStatus("Cancelling media job…");
       return { jobId: request.jobId };
+    case "offlineRetry":
+      await retryOffline(request.jobId);
+      return { jobId: request.jobId };
+    case "offlineRemove": {
+      const response = await requestNative("offlineRemove", { jobId: request.jobId });
+      await setOfflineState(response);
+      return { jobId: request.jobId };
+    }
+    case "libraryPlay":
+      await requestNative("libraryPlay", { libraryId: request.libraryId, player: request.player });
+      return { libraryId: request.libraryId };
+    case "libraryReveal":
+      await requestNative("libraryReveal", { libraryId: request.libraryId });
+      return { libraryId: request.libraryId };
+    case "libraryDelete": {
+      const response = await requestNative("libraryDelete", { libraryId: request.libraryId });
+      await setOfflineState(response);
+      return { libraryId: request.libraryId };
+    }
   }
 }
 
